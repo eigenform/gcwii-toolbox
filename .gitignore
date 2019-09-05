@@ -1,0 +1,6 @@
+*
+!.gitignore
+!arm9ejs_ios.sinc
+!bin/
+!bin/ios-unpack
+!bin/ios-res-syscall

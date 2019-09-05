@@ -1,0 +1,45 @@
+#!/usr/bin/python3
+""" ios-unpack
+Unpack Wii IOS containers into an ARM binary + stub loader.
+
+    struct container
+    {
+        u32 header_len;
+        u32 elf_offset;
+        u32 elf_size;
+        u32 pad;
+
+        u8 stub_loader_data[elf_offset - header_len];
+        u8 elf_data[elf_size];
+    };
+
+"""
+
+from sys import argv
+from struct import pack, unpack
+
+if (len(argv) < 2):
+    print("ios-unpack <container to unpack>")
+    exit()
+
+inpath = argv[1]
+path_elf = inpath + ".elf"
+path_stub = inpath + ".stub.bin"
+with open(inpath, "rb") as f:
+    data = f.read()
+    print("Read {:08x} bytes from {}".format(len(data), inpath))
+    
+hdr_len, elf_off, elf_len = unpack(">LLL", data[0x00:0x0c])
+
+elf_data  = data[elf_off+hdr_len:elf_off+hdr_len+elf_len]
+assert (len(elf_data) == elf_len)
+assert (elf_data[0x00:0x04] == b'\x7fELF')
+with open(path_elf, "wb") as f:
+    f.write(elf_data)
+    print("Wrote {:08x} bytes to {}".format(len(elf_data), path_elf))
+
+stub_data = data[hdr_len:elf_off]
+assert (len(stub_data) == (elf_off - hdr_len))
+with open(path_stub, "wb") as f:
+    f.write(stub_data)
+    print("Wrote {:08x} bytes to {}".format(len(stub_data), path_stub))

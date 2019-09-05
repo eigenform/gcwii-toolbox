@@ -1,0 +1,17 @@
+define pcodeop ios_syscall;
+:ios_syscall^COND immed24	is $(AMODE) & COND & c2831=14 & c2427=6 & immed24
+{
+	build COND;
+
+	# The syscall ID is ((low 24 bits >> 5) & 0xff)
+
+	id:4 = (immed24 >> 5) & 0xff;
+
+	# Ghidra has no way of knowing that the unhandled opcode exception vector
+	# is intentionally used as a mechanism for implementing syscalls in IOS.
+	# 
+	# Just wire these up to branch to the exception vector on IOS.
+
+	pc = 0xffff0004;
+	goto [pc];
+}
