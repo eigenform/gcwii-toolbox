@@ -1,0 +1,63 @@
+#!/usr/bin/python
+''' dolparse - Pull out information about DOL sections from the header '''
+
+import sys
+from struct import pack, unpack
+
+if (len(sys.argv) < 2):
+    print("usage: dolparse <input .DOL file>")
+    exit(-1)
+
+filename = sys.argv[1]
+hdr = {
+            'text': [], 
+            'data': [], 
+            'bss': { 'size': None, 'addr': None, }, 
+            'entrypoint': None
+}
+
+for i in range(0,7):
+    hdr['text'].append( {'addr': None, 'size': None, 'off': None} )
+for i in range(0,11):
+    hdr['data'].append( {'addr': None, 'size': None, 'off': None} )
+
+with open(filename, "rb") as f:
+    for i in range(0,7):
+        hdr['text'][i]['off']  = unpack(">L", f.read(4))[0]
+    for i in range(0,11):
+        hdr['data'][i]['off']  = unpack(">L", f.read(4))[0]
+    for i in range(0,7):
+        hdr['text'][i]['addr'] = unpack(">L", f.read(4))[0]
+    for i in range(0,11):
+        hdr['data'][i]['addr'] = unpack(">L", f.read(4))[0]
+    for i in range(0,7):
+        hdr['text'][i]['size'] = unpack(">L", f.read(4))[0]
+    for i in range(0,11):
+        hdr['data'][i]['size'] = unpack(">L", f.read(4))[0]
+    hdr['bss']['addr'] = unpack(">L", f.read(4))[0]
+    hdr['bss']['size'] = unpack(">L", f.read(4))[0]
+    hdr['entrypoint']  = unpack(">L", f.read(4))[0]
+
+FMTSTRING = "0x{:08x} - 0x{:08x}, size=0x{:08x}, offset=0x{:08x}"
+
+for i in range(0, 7):
+    size = hdr['text'][i]['size']
+    if (size != 0):
+        off = hdr['text'][i]['off']
+        base = hdr['text'][i]['addr']
+        tail = hdr['text'][i]['addr'] + size
+        print("Text section {}:\t{}".format(i, 
+            FMTSTRING.format(base, tail, size, off)))
+for i in range(0, 11):
+    size = hdr['data'][i]['size']
+    if (size != 0):
+        off = hdr['data'][i]['off']
+        base = hdr['data'][i]['addr']
+        tail = hdr['data'][i]['addr'] + size
+        print("Data section {}:\t{}".format(i, 
+            FMTSTRING.format(base, tail, size, off)))
+
+print("BSS section:\t0x{:08x} - 0x{:08x}".format(hdr['bss']['addr'], 
+    (hdr['bss']['addr'] + hdr['bss']['size'])))
+
+print("Entrypoint:\t0x{:08x}".format(hdr['entrypoint']))

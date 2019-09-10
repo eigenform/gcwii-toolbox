@@ -4,3 +4,4 @@
 !bin/
 !bin/ios-unpack
 !bin/ios-res-syscall
+!bin/dolparse
