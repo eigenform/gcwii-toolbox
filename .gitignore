@@ -5,3 +5,7 @@
 !bin/ios-unpack
 !bin/ios-res-syscall
 !bin/dolparse
+!es_gettitle_exec/
+!es_gettitle_exec/get_titles.py
+!es_gettitle_exec/Makefile
+!es_gettitle_exec/stub.s
