@@ -3,17 +3,24 @@
 // I *think* this is correct
 #define	IOS58_VERSION 0x00501b20
 
+typedef struct elfldr_hdr
+{
+	unsigned int hdr_len;
+	unsigned int elf_off;
+	unsigned int elf_len;
+	unsigned int pad;
+} elfldr_hdr;
+
 
 /* boot_new_ios_kernel() typically expects a pointer to an ARM ELF with some
  * embedded stub loader. Here, we can just embed the expected header in the
- * .text section and branch to __kernel_main() in the context of the currently
- * running kernel *without* actually reloading it.
+ * .text section immediately before some code [that we want to run in the 
+ * context of the currently running kernel], and then point the syscall at the
+ * header.
  *
- * The syscall expects the new kernel entrypoint to deal with the fact that
- * interrupts, icache, and the MMU are all disabled before branching. We can 
- * just account for this here by restoring everything.
- *
- * There are some other side effects:
+ * Typically this syscall reloads a new kernel, so we need to account for the
+ * fact that some state has changed (icache, MMU, interrupts disabled). 
+ * Other side effects to-be-addressed:
  *
  *	 - on low MEM1 (PPC globals)
  *	 - some NAND register
@@ -21,10 +28,8 @@
  *
  */
 
-// `int __kernel_stub` should be `(u32)&__kernel_main - (u32)&__kernel_stub`
-int __kernel_stub __attribute__ ((section (".text"))) = 0x10;
-int padding[3] __attribute__ ((section (".text"))) = { 0 };
-void __attribute__((naked)) __kernel_main()
+elfldr_hdr header __attribute__((section (".text"))) = { 0x10 };
+void __attribute__((naked)) __kernel_stub()
 {
 	asm volatile 
 	(
@@ -43,20 +48,19 @@ void __attribute__((naked)) __kernel_main()
 		"msr cpsr_c, r1\n"
 	);
 
-	// Do things in kernel context
+	// Do things in the kernel
 	// ...
 
 	asm volatile ("bx lr\n");
 }
-
 
 void __main()
 {
 	// Grant PPC access on Hollywood registers
 	set_ahbprot(1);
 
-	// This syscall can just be used to run in the kernel context
-	boot_new_ios_kernel(&__kernel_stub, IOS58_VERSION);
+	// Run some code in the context of the running kernel
+	boot_new_ios_kernel(&header, IOS58_VERSION);
 
 	return;
 }
