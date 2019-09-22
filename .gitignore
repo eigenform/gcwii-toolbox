@@ -8,4 +8,9 @@
 !es_gettitle_exec/
 !es_gettitle_exec/get_titles.py
 !es_gettitle_exec/Makefile
-!es_gettitle_exec/stub.s
+!es_gettitle_exec/cstub/
+!es_gettitle_exec/cstub/main.c
+!es_gettitle_exec/cstub/stub.S
+!es_gettitle_exec/cstub/syscall.h
+!es_gettitle_exec/stub/
+!es_gettitle_exec/stub/stub.S
