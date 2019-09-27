@@ -1,5 +1,6 @@
 *
 !.gitignore
+!Makefile
 !arm9ejs_ios.sinc
 !bin/
 !bin/ios-unpack
