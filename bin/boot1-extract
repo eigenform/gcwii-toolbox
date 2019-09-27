@@ -18,6 +18,8 @@ from Crypto.Hash import SHA1
 from hexdump import hexdump
 from struct import pack, unpack
 
+from hollywood_sha1 import *
+
 PAGE_LEN = 0x800
 FULL_PAGE_LEN = PAGE_LEN + 0x40
 CLUSTER_LEN = FULL_PAGE_LEN * 8
@@ -54,7 +56,7 @@ if ((len(argv) >= 3) and (argv[2] == "--otp")):
         otp_hash_bin = bytearray(f.read(0x14))
         otp_hash_str = ''.join('{:02x}'.format(x) for x in otp_hash_bin)
         print("[*] OTP boot1 digest:\t {}".format(otp_hash_str))
-
+        print()
 
 # -----------------------------------------------------------------------------
 # Decrypt boot1 and compute a SHA1 digest over the data
@@ -62,21 +64,40 @@ if ((len(argv) >= 3) and (argv[2] == "--otp")):
 aes = AES.new(KEY, AES.MODE_CBC, IV)
 boot1_sha = SHA1.new()
 
+x = Sha1Hash()
+
 # Compute SHA1 digest over the boot1 data
 pagenum = 0
+
 raw_data = bytearray()
 while True:
-    if (pagenum >= 47): 
-        break
+    if (pagenum > 0x30): break
+    
 
-    page_base = 0x840 * pagenum
-    page_tail = page_base + 0x840
-    page_data = data[page_base:page_tail]
+    page_base = FULL_PAGE_LEN * pagenum
+    page_tail = page_base + FULL_PAGE_LEN
+    page_data = bytearray(data[page_base:page_tail])
+    page_contents = bytearray(page_data[0:PAGE_LEN])
 
-    raw_page_data = aes.decrypt(page_data[0x000:0x800])
+    print("page_data @ {}, len={}".format(hex(id(page_data)), hex(len(page_data))))
+    print("page_contents @ {}, len={}".format(hex(id(page_contents)), hex(len(page_contents))))
 
-    raw_data += raw_page_data
+    # Decrypt the data
+    raw_page_data = bytearray()
+    raw_page_data += aes.decrypt(page_contents)
+    print("raw_page_data @ {}, len={}, {}".format(hex(id(raw_page_data)), hex(len(raw_page_data)), type(raw_page_data)))
+
+
+    if (pagenum == 0):
+        with open("/tmp/page0.bin", "wb") as f:
+            f.write(raw_page_data)
+
+
     boot1_sha.update(raw_page_data)
+    print("[*] NAND digest:\t {}".format(boot1_sha.hexdigest()))
+
+    # Append to output data and increment the page
+    raw_data += raw_page_data
     pagenum += 1
 
 print("[*] NAND boot1 digest:\t {}".format(boot1_sha.hexdigest()))
