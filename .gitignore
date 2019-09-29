@@ -6,6 +6,7 @@
 !bin/ios-unpack
 !bin/ios-res-syscall
 !bin/dolparse
+!bin/rvth-extract
 !src/
 !src/es_gettitle_exec/
 !src/es_gettitle_exec/get_titles.py
