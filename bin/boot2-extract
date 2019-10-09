@@ -1,0 +1,160 @@
+#!/usr/bin/python3
+""" boot2-extract
+Pull out boot2 data from NAND dumps. Adapted directly from MINI.
+"""
+
+from sys import argv
+from struct import pack, unpack
+from hexdump import hexdump
+from os.path import expanduser
+
+from Crypto.Cipher import AES
+
+MAP_SIG             = b'\x26\xf2\x9a\x40\x1e\xe6\x84\xcf'
+TOTAL_PAGE_SIZE     = 0x840
+METADATA_SIZE       = 0x040
+USERDATA_SIZE       = 0x800
+BLOCK_SIZE          = 64
+
+class Content(object):
+    def __init__(self, data):
+        self.data = data
+        self.cid,self.index,self.type,self.size = unpack(">LHHQ", data[:0x10])
+
+class TitleMetadata(object):
+    def __init__(self, data):
+        self.data = data
+        self.title_version = unpack(">H", data[0x1dc:0x1de])[0]
+        self.num_contents = unpack(">H", data[0x1de:0x1e0])[0]
+        self.content = []
+        cur = 0x1e4
+        for i in range(0,self.num_contents):
+            self.content.append(Content(data[cur:cur+0x24]))
+            cur += 0x24
+    def print_info(self):
+        print("[*] TMD title version {:08x}".format(self.title_version))
+        print("[*] TMD has {} content entries".format(self.num_contents))
+        for c in self.content:
+            print("[*]  cid={:08x}, idx={:08x}, type={:08x}, len={:08x}".format(
+                c.cid, c.index, c.type, c.size))
+
+class Ticket(object):
+    def __init__(self, data):
+        assert len(data) == 0x2a4
+        self.data = data
+        self.title_iv = b'\x00' * 0x10
+        self.enc_title_key = data[0x1bf:0x1cf]
+        self.iv = bytearray(data[0x1dc:0x1e4] + b'\x00' * 0x8)
+        keywrap_cipher = AES.new(self.__get_common_key(), 
+                AES.MODE_CBC, iv=self.iv)
+        self.title_key = keywrap_cipher.decrypt(self.enc_title_key)
+        self.cipher = AES.new(self.title_key, AES.MODE_CBC, iv=self.title_iv)
+
+    def __get_common_key(self):
+        path = expanduser("~/.wii/common-key")
+        try:
+            with open(path, "rb") as f:
+                self.rvt_common_key = f.read()
+        except:
+            print("[!] Couldn't open common key at {}".format(path))
+            exit()
+        return self.rvt_common_key
+
+def pn2off(pagenum):
+    return TOTAL_PAGE_SIZE * pagenum
+
+valid_blocks = []
+def bootpn2pn(boot2_pagenum):
+    subpage = boot2_pagenum % BLOCK_SIZE
+    block = boot2_pagenum // BLOCK_SIZE
+    if (block >= len(valid_blocks)):
+        print("[!] Tried to read outside the valid boot2 block range")
+        exit()
+    return valid_blocks[block] * BLOCK_SIZE + subpage
+
+def dump(data, lvl):
+    indent = '\t' * lvl
+    for line in hexdump(data, result='generator'):
+        print("{}{}".format(indent, line))
+
+# -----------------------------------------------------------------------------
+
+if (len(argv) < 2):
+    print("usage: {} <nand.bin>".format(argv[0]))
+    exit()
+
+with open(argv[1], "rb") as f:
+    data = f.read()
+    print("[*] Read {:08x} bytes from {}".format(len(data), argv[1]))
+
+# Find all instances of the boot2 blockmap
+cur = 0
+map_off_list = []
+while (cur < len(data)):
+    cur = data.find(MAP_SIG, cur)
+    if (cur == -1): break
+    map_off_list.append(cur)
+    cur += len(MAP_SIG)
+
+# Pull all of the boot2 blockmap structures
+map_list = []
+for off in map_off_list:
+    mdata = data[off:off+0x4c]
+    map_list.append(mdata)
+    print("[*] Found boot2 blockmap at offset {:08x}".format(off))
+    #dump(mdata, 1)
+
+
+# FIXME: Check map generation and use the latest one?
+print("[*] Using deepest map by default")
+cur_map = map_list[-1]
+
+# Get the list of valid boot2 block numbers
+for blockidx in range(0,0x40):
+    if (cur_map[0xc+blockidx:0xc+blockidx+1] == b'\x00'):
+        print("[*] Block {} is valid".format(blockidx))
+        valid_blocks.append(blockidx)
+
+
+# -----------------------------------------------------------------------------
+
+# Parse up the boot2 header and read the actual data. Assume that everything
+# will fit in the space of these first four blocks of raw data, for now
+boot2 = bytearray()
+for i in range(0, 64 * 4):
+    off = pn2off(bootpn2pn(i))
+    boot2 += data[off:off+0x800]
+
+hdr_data = boot2[0x00:0x14]
+hdrlen, doff, certlen, tiklen, tmdlen = unpack(">LLLLL", hdr_data)
+print("[*] Got boot2 header,  data_off={:08x}".format(doff))
+print("[*] cert_len={:08x}, ticket_len={:08x}, tmd_len={:08x}".format(certlen, 
+    tiklen, tmdlen))
+dump(hdr_data, 1)
+cur = hdrlen
+
+# Pull out certificate chain data
+cert_data = boot2[cur:cur+certlen]
+cur += certlen
+
+# Pull out ticket data
+ticket_data = boot2[cur:cur+tiklen]
+ticket = Ticket(ticket_data)
+cur += tiklen
+
+# Pull out title metadata
+tmd_data = boot2[cur:cur+tmdlen]
+tmd = TitleMetadata(tmd_data)
+tmd.print_info()
+
+# Align boot2 length to 16 bytes (the offset is already probably aligned).
+# Assumption here is that the TMD only has one content entry with the data.
+boot2_len = (tmd.content[0].size + 0x0f) & ~0x0f
+boot2_data = boot2[doff:doff+boot2_len]
+
+# Decrypt actual boot2 data
+boot2_ddata = ticket.cipher.decrypt(boot2_data)
+filename = "boot2v{:02d}.bin".format(tmd.title_version)
+with open(filename, "wb") as f:
+    f.write(boot2_ddata)
+

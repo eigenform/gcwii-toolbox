@@ -63,6 +63,12 @@ with open(argv[1], "rb") as f:
         f.seek(poff + p['tmd_off'])
         tmd_data = f.read(p['tmd_len'])
 
+
+        if (p['data_off'] == 0x20000):
+            print("[!] This title is probably encrypted")
+            exit()
+
+
         # Read in boot.bin and bi2.bin
         f.seek(poff + p['data_off'] + 0x420)
         boot_data = f.read(0x20)

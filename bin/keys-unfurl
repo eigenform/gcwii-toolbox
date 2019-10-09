@@ -1,0 +1,36 @@
+#!/usr/bin/python3
+""" keys-unfurl - pull all the keys from a BackupMii keys.bin """
+from sys import argv
+
+if (len(argv) < 2):
+    print("usage: {} <keys.bin>".format(argv[0]))
+    exit()
+
+try:
+    with open(argv[1], "rb") as f:
+        keys = f.read()
+except:
+    print("[!] Couldn't read {}".format(argv[1]))
+    exit()
+assert len(keys) == 0x400
+
+boot1_hash      = keys[0x100:0x114]
+common_key      = keys[0x114:0x124]
+console_id      = keys[0x124:0x128]
+ecc_private_key = keys[0x128:0x146]
+nand_hmac       = keys[0x144:0x158]
+nand_aes_key    = keys[0x158:0x168]
+prng_seed       = keys[0x168:0x178]
+ng_key_id       = keys[0x208:0x20c]
+ng_sig          = keys[0x20c:0x248]
+
+with open("console-id", "wb") as f:
+    f.write(console_id)
+with open("common-key", "wb") as f:
+    f.write(common_key)
+with open("nand-hmac", "wb") as f:
+    f.write(nand_hmac)
+with open("nand-key", "wb") as f:
+    f.write(nand_aes_key)
+with open("prng-seed", "wb") as f:
+    f.write(prng_seed)
