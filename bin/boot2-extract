@@ -130,7 +130,6 @@ hdrlen, doff, certlen, tiklen, tmdlen = unpack(">LLLLL", hdr_data)
 print("[*] Got boot2 header,  data_off={:08x}".format(doff))
 print("[*] cert_len={:08x}, ticket_len={:08x}, tmd_len={:08x}".format(certlen, 
     tiklen, tmdlen))
-dump(hdr_data, 1)
 cur = hdrlen
 
 # Pull out certificate chain data

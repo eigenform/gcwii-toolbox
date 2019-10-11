@@ -81,12 +81,6 @@ def dump(data, lvl):
     for line in hexdump(data, result='generator'):
         print("{}{}".format(indent, line))
 
-def intersect(*d):
-    sets = iter(map(set, d))
-    res = sets.next()
-    for s in sets:
-        res = res.intersection(s)
-    return res
 
 # -----------------------------------------------------------------------------
 # Handle arguments

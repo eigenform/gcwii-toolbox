@@ -10,7 +10,13 @@
 !bin/keys-extract
 !bin/rvth-extract
 !bin/boot2-extract
-!bin/gcm.py
+!bin/pywiire/
+!bin/pywiire/gcm.py
+!bin/pywiire/keys.py
+!bin/pywiire/nand.py
+!bin/pywiire/README.md
+!bin/pywiire/title.py
+!bin/pywiire/util.py
 !src/
 !src/es_gettitle_exec/
 !src/es_gettitle_exec/get_titles.py
