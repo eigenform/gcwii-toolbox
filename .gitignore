@@ -4,10 +4,10 @@
 !arm9ejs_ios.sinc
 !bin/
 !bin/freeblocks
-!bin/ios-unpack
+!bin/ios-extract
 !bin/ios-res-syscall
 !bin/dolparse
-!bin/keys-unfurl
+!bin/keys-extract
 !bin/rvth-extract
 !bin/boot2-extract
 !bin/gcm.py

@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-""" keys-unfurl - pull all the keys from a BackupMii keys.bin """
+""" keys-extract - pull all the keys from a BackupMii keys.bin """
 from sys import argv
 
 if (len(argv) < 2):

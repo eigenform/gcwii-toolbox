@@ -1,6 +1,7 @@
 #!/usr/bin/python3
-""" ios-unpack
-Unpack Wii IOS containers into an ARM binary + stub loader.
+""" ios-extract
+Binaries running on Starlet/IOP/ARM-world are typically packed in a container
+consisting of a header + stub loader + ARM ELF binary.
 
     struct container
     {
