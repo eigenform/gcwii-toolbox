@@ -1,0 +1,133 @@
+#!/usr/bin/python3
+""" freeblocks
+Rudimentary script for Wii SFFS/FAT free block analysis.
+"""
+
+import argparse
+from os.path import expanduser, exists
+from os import mkdir, makedirs
+from hexdump import hexdump
+from struct import pack, unpack
+
+from Crypto.Cipher import AES
+
+SFFS_MAGIC          = b'SFFS'
+
+TOTAL_PAGE_SIZE     = 0x840
+PAGE_SIZE           = 0x800
+METADATA_SIZE       = 0x40
+
+BLOCK_LAST          = 0xfffb
+BLOCK_RESERVED      = 0xfffc
+BLOCK_BAD           = 0xfffd
+BLOCK_FREE          = 0xfffe
+
+
+class FAT(object):
+    """ Object representing an SFFS file allocation table """
+    def __lt__(self, x):
+        """ We want to order FAT objects by the generation number """
+        return self.gen < x.gen
+
+    def __init__(self, off, data):
+        assert len(data) == 0x1000c
+        self.offset = off
+        self.data = data
+        self.magic = unpack(">L", data[0x00:0x04])[0]
+        self.gen = unpack(">L", data[0x04:0x08])[0]
+
+        # Generate a list of blocks in this FAT
+        self.block = []
+        cur = 0x0c
+        for i in range(0, 0x8000):
+            self.block.append(unpack(">H", data[cur:cur+0x2])[0])
+            cur += 0x2
+        assert len(self.block) == 0x8000
+
+        # Generate a list of free blocks 
+        self.free_blocks = self.get_free_blocks()
+
+    def get_free_blocks(self):
+        """ Get the list of block numbers marked as free in this FAT """
+        free_blocks = []
+        for idx, block in enumerate(self.block):
+            if (self.block[idx] == BLOCK_FREE): 
+                free_blocks.append(idx)
+        return free_blocks
+
+
+# -----------------------------------------------------------------------------
+# Helper functions
+
+def dump(data, lvl):
+    """ Hexdump some bytearray with indentation """
+    indent = '\t' * lvl
+    for line in hexdump(data, result='generator'):
+        print("{}{}".format(indent, line))
+
+def intersect(*d):
+    sets = iter(map(set, d))
+    res = sets.next()
+    for s in sets:
+        res = res.intersection(s)
+    return res
+
+# -----------------------------------------------------------------------------
+# Handle arguments
+
+DEFAULT_NAND_KEY = expanduser("~/.wii/nand-key")
+parser = argparse.ArgumentParser(description='Wii NAND freeblock analysis')
+parser.add_argument('nand_bin', help="input NAND dump")
+parser.add_argument('out_dir', help="output directory")
+parser.add_argument('-k', '--nand-key', default=DEFAULT_NAND_KEY, help="NAND key file")
+args = parser.parse_args()
+
+# Make output directory
+if (not exists(args.out_dir)):
+    makedirs(args.out_dir)
+
+# Read NAND key material
+with open(args.nand_key, "rb") as f:
+    NAND_KEY = f.read()
+
+# Read the entire NAND dump into memory
+with open(args.nand_bin, "rb") as f:
+    print("[*] Reading NAND dump at {} ...".format(args.nand_bin))
+    data = f.read()
+
+
+# -----------------------------------------------------------------------------
+
+# FIXME: Only search high pages to avoid false positives
+# Search through NAND and find the file-allocation tables (should be 16?).
+
+fat_list = []
+cur = 0
+
+print("[*] Searching for FATs ...")
+while (cur < len(data)):
+    cur = data.find(SFFS_MAGIC, cur)
+    if (cur == -1): 
+        break
+    fat = FAT(cur, data[cur:cur + 0x1000c])
+    fat_list.append(fat)
+    cur += len(SFFS_MAGIC)
+print("[*] Found {} FATs ...".format(len(fat_list)))
+
+# Enforce ordering of FATs in this list by the generation number (this makes 
+# it kinda easier to deal with reasoning about things changing through time).
+# Then, get a list of each generation's free blocks.
+
+fat_list.sort()
+
+free_lists = []
+for fat in fat_list:
+    free_lists.append(set(fat.free_blocks))
+
+
+# Compute the set of common free blocks between all current FAT generations.
+
+common_free_list = set.intersection(*free_lists)
+
+
+
