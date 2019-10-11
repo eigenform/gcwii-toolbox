@@ -8,9 +8,14 @@ from os.path import expanduser, exists
 from os import mkdir, makedirs
 from hexdump import hexdump
 from struct import pack, unpack
+from io import BytesIO as bio
+
+from elftools.elf.elffile import ELFFile
+from elftools.common.exceptions import *
 
 from Crypto.Cipher import AES
 
+ELF_MAGIC           = b'\x7fELF'
 SFFS_MAGIC          = b'SFFS'
 
 TOTAL_PAGE_SIZE     = 0x840
@@ -44,16 +49,27 @@ class FAT(object):
             cur += 0x2
         assert len(self.block) == 0x8000
 
-        # Generate a list of free blocks 
-        self.free_blocks = self.get_free_blocks()
-
-    def get_free_blocks(self):
-        """ Get the list of block numbers marked as free in this FAT """
-        free_blocks = []
+        # Generate list of various interesting blocks
+        self.free_blocks = []
         for idx, block in enumerate(self.block):
             if (self.block[idx] == BLOCK_FREE): 
-                free_blocks.append(idx)
-        return free_blocks
+                self.free_blocks.append(idx)
+
+        # Find contiguous regions of free blocks
+        start = -1
+        end = -1;
+        self.free_regions = []
+        for bidx in self.free_blocks:
+            # Continue the region we're in
+            if (bidx == (end + 1)):
+                end = bidx
+            else:
+
+
+            # Start of a new region
+            if (start == -1):
+                start = bidx
+                end = start
 
 
 # -----------------------------------------------------------------------------
@@ -116,16 +132,30 @@ print("[*] Found {} FATs ...".format(len(fat_list)))
 
 # Enforce ordering of FATs in this list by the generation number (this makes 
 # it kinda easier to deal with reasoning about things changing through time).
-# Then, get a list of each generation's free blocks.
+# Then, naively annotate the history of the FAT over the last 16 generations.
 
 fat_list.sort()
+
+prev_freeblocks = fat_list[0].free_blocks
+print("[*] gen={:04x}: num_free={:04x}".format(fat_list[0].gen, len(prev_freeblocks)))
+
+for fat in fat_list:
+    cur_freeblocks = fat.free_blocks
+
+    # If the freelist has changed since the last generation
+    if (cur_freeblocks != prev_freeblocks):
+        print("[*] gen={:04x}: num_free={:04x} ({:+04x} blocks)".format(fat.gen, 
+            len(cur_freeblocks), (len(cur_freeblocks) - len(prev_freeblocks))))
+
+    prev_freeblocks = cur_freeblocks
+
+# Get a list of each generation's free blocks, then compute the set of common 
+# free blocks between all of the FATs we have access to here.
+# This set of free blocks must be older than the past 16 generations.
 
 free_lists = []
 for fat in fat_list:
     free_lists.append(set(fat.free_blocks))
-
-
-# Compute the set of common free blocks between all current FAT generations.
 
 common_free_list = set.intersection(*free_lists)
 
