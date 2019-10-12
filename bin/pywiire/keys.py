@@ -15,7 +15,7 @@ def set_keyring_path(path):
     else:
         KEYRING_PATH = path
 
-def read_key(key_name):
+def read_key(keyname):
     """ Given some file in the keyring directory, return key material.
     This can be relative path (i.e. to keys in subdirectories).
     """
@@ -24,10 +24,10 @@ def read_key(key_name):
         print("[!] Key file {} does not exist?")
         exit()
     try:
-        with open(path, "rb") as f:
+        with open(keypath, "rb") as f:
             key = f.read()
     except:
-        print("[!] Couldn't read key file {}".format(path))
+        print("[!] Couldn't read key file {}".format(keypath))
         exit()
     return key
 

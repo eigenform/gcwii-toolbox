@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 """ gcm.py - containers/wrappers for dealing with GCN/Wii disk images """
 
-from enum import Enum
+import errno 
 
 from os import mkdir, makedirs
 from os.path import exists
@@ -94,10 +94,14 @@ class GCM(object):
     Container representing a GCM disk image.
     """
     def __init__(self, fd):
+
+        # FIXME: Deal with this in a nicer way
+        self.fd = fd
+
         # Read the boot data block and BI2 data block
-        fd.seek(0x420)
-        self.boot_data = fd.read(0x20)
-        self.bi2_data = fd.read(0x40)
+        self.fd.seek(0x420)
+        self.boot_data = self.fd.read(0x20)
+        self.bi2_data = self.fd.read(0x40)
 
         # Get some important fields in boot.bin
         self.main_dol_off, self.fst_off, self.fst_len, self.max_fst_len = \
@@ -107,8 +111,8 @@ class GCM(object):
         #fd.seek(main_dol_off)
 
         # Extract the FST from the image
-        fd.seek(self.fst_off)
-        self.fst = FST(fd.read(self.fst_len))
+        self.fd.seek(self.fst_off)
+        self.fst = FST(self.fd.read(self.fst_len))
         
 
     def dump_files(self, dest_dir):
@@ -122,7 +126,7 @@ class GCM(object):
         depth = 0
         path = []
 
-        for idx, e in enumerate(self.ents):
+        for idx, e in enumerate(self.fst.ents):
             off = e['off']
             size = e['size']
             name = e['name']
@@ -135,12 +139,17 @@ class GCM(object):
             if (idx >= dir_end_idx): depth = depth - 1
             if (isdir): dir_end_idx = size - 2
 
-            # Make a directory, otherwise write a file
+            # If this is a folder entry, try to create a directory.
+            # Otherwise, if this is a file, write it to disk.
             if (isdir):
-                makedirs(path)
+                try:
+                    makedirs(path)
+                except OSError as e:
+                    # Fail silently if a folder already exists
+                    if (e.errno == errno.EEXIST): pass
             else:
-                fd.seek(off)
-                of_data = fd.read(size)
+                self.fd.seek(off)
+                of_data = self.fd.read(size)
                 with open(path, "wb") as of:
                     of.write(of_data)
 

@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 
 from struct import pack, unpack
-from util import *
+from pywiire.util import *
 
 BOOT2_MAGIC         = b'\x26\xf2\x9a\x40\x1e\xe6\x84\xcf'
 SFFS_MAGIC          = b'SFFS'
