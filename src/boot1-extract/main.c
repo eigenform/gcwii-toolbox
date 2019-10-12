@@ -6,6 +6,11 @@
  *
  * I'm not sure if this particular SHA1 implementation is actually necessary
  * and sufficient or not; can't tell. 
+ *
+ * FIXME: I have a Python version of this which is much terser, but tt seems 
+ * like I can't get Python to compute the correct SHA1 digest, so I assume it 
+ * either involves *THIS PARTICULAR* SHA1 implementation from segher's tools, 
+ * or it has something to do with how PyCrypto actually does the hashing?
  */
 
 #include <stdint.h>

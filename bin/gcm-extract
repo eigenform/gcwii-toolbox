@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-""" gcm-extract - extract a GCM to some directory """
+""" gcm-extract - extract a flat GCM to some directory """
 
 from pywiire.gcm import *
 from sys import argv
@@ -9,6 +9,6 @@ if (len(argv) < 3):
     exit()
 
 f = open(argv[1], "rb")
-disc = GCM(f)
+disc = DiscImage(f, no_partitions=True)
 disc.dump_files(argv[2])
 f.close()
