@@ -27,6 +27,52 @@ from binascii import hexlify, unhexlify
 from struct import pack, unpack
 from sys import argv
 
+
+def hexdump_indent(data, lvl):
+    """ Hexdump wrapper with indentation """
+    indent = '\t' * lvl
+    for line in hexdump(data, result='generator'):
+        print("{}{}".format(indent, line))
+
+
+class AHBInterface(object):
+    def __init__(self, parent):
+        self.starlet = parent
+        self.flush_req = 0
+        self.spare0_flags = 0
+
+    def update(self):
+        # Immediately ACK flush requests (i think this is how this works)
+        req = self.starlet.read16(0x0d8b4228)
+        if (req != 0):
+            print("[*] AHB acked flush request {:04x}".format(req))
+            self.starlet.write16(0x0d8b422a, req)
+
+        spare0 = self.starlet.read32(0x0d800188)
+        if (self.spare0_flags != spare0):
+            self.spare0_flags = spare0
+            boot0 = self.starlet.read32(0x0d80018c)
+            if ((spare0 & 0x10000) != 0x10000): 
+                boot0 |= 9
+            else:
+                boot0 &= 0xffffffff6
+            self.starlet.write32(0x0d80018c, boot0)
+            print("[*] PLAT: Spare 0 write {:08x}, set boot0 to {:08x}"\
+                    .format(spare0, boot0))
+
+
+class GPIOInterface(object):
+    def __init__(self, parent):
+        self.starlet = parent
+        self.arm_out = 0
+
+    def update(self):
+        out = self.starlet.read32(0x0d8000e0)
+        if (self.arm_out != out):
+            print("[!] ARMGPIO output set to {:08x}".format(out))
+            self.arm_out = out
+        
+
 NAND_FLAG_WAIT          = 0x08
 NAND_FLAG_WRITE         = 0x04
 NAND_FLAG_READ          = 0x02
@@ -42,7 +88,7 @@ class NANDInterface(object):
 
         # Mock NAND data
         self.data = bytearray()
-        self.data += b'\xde\xad\xbe\xef' * 0x100000
+        #self.data += b'\xde\xad\xbe\xef' * 0x100000
 
     def update(self):
         ctrl = self.starlet.read32(0x0d010000)
@@ -56,7 +102,7 @@ class NANDInterface(object):
             datasize = (ctrl & 0x00000fff)
 
             print("[*] NAND mask={:02x} cmd={:02x} flags={:02x} size={:04x}"\
-                    .format(ctrl, mask, cmd, flags, datasize))
+                    .format(mask, cmd, flags, datasize))
 
             # Just use command and size to infer what needs to happen?
             if (cmd == NAND_CMD_RESET):
@@ -75,6 +121,15 @@ class NANDInterface(object):
                     nand_data = self.nand_read(addr0, addr1, datasize)
                     self.starlet.dma_write(dma_data_addr, nand_data[0:0x800])
                     self.starlet.dma_write(dma_ecc_addr, nand_data[0x800:0x840])
+
+                    if ((flags & NAND_FLAG_ECC) == NAND_FLAG_ECC):
+                        self.starlet.write32(((dma_ecc_addr ^ 0x40) + 0x00), 0)
+                        self.starlet.write32(((dma_ecc_addr ^ 0x40) + 0x04), 0)
+                        self.starlet.write32(((dma_ecc_addr ^ 0x40) + 0x08), 0)
+                        self.starlet.write32(((dma_ecc_addr ^ 0x40) + 0x0c), 0)
+
+                    print("[!] NAND DMA write to {:08x}".format(dma_data_addr))
+                    hexdump_indent(self.starlet.dma_read(dma_data_addr,0x840), 1)
                     self.clear_command(ctrl)
                 else:
                     print("[*] NAND unimpl datasize")
@@ -99,19 +154,23 @@ class StarletIO(object):
         self.timer = 0
         self.starlet = parent
         self.nand = NANDInterface(parent)
+        self.ahb = AHBInterface(parent)
+        self.gpio = GPIOInterface(parent)
 
     def update(self):
         """ Update various aspects of I/O or chipset state """
         self.timer += self.starlet.last_block_size * 0x10
         self.starlet.write32(0x0d800010, self.timer)
         self.nand.update()
+        self.ahb.update()
+        self.gpio.update()
 
 
 class Starlet(object):
     def __init__(self):
         self.running = False
         self.code_loaded = False
-        self.mmio_log_enabled = True
+        self.symbols = {}
         self.last_block_size = 0
         self.block_count = 0
         self.last_mmio_pc = 0
@@ -124,6 +183,38 @@ class Starlet(object):
         self.io = StarletIO(self)
         self.__init_mmu()
         self.__init_hook()
+    
+    def import_nand(self, filename):
+        """ Load a NAND dump (reading it all into memory at once) """
+        with open(filename, "rb") as f:
+            self.io.nand.data = f.read()
+        print("[*] Imported NAND from {} ({:08x})".format(filename,
+            len(self.io.nand.data)))
+
+
+    def find_symbol(self, addr):
+        target = min(self.symbols, key=lambda x: abs(x - addr))
+        return self.symbols[target]
+
+    def get_symbol(self, addr):
+        """ Directly fetch a symbol """
+        if (self.symbols):
+            return self.symbols.get(addr)
+        else:
+            return None
+
+    def import_symbols(self, filename):
+        """ this is awful """
+        assert self.running == False
+        with open(filename, "rb") as f:
+            for line in f.readlines():
+                l = line.decode('utf-8').replace('"', "")
+                x = l.split(',')
+                addr = int(x[0], 16)
+                name = x[1]
+                self.symbols[addr] = name
+        print("[*] Imported {} symbols from {}".format(len(self.symbols),
+            filename))
 
     def __get_breakpoint_func(self):
         def breakpoint_hook(uc, address, size, user_data):
@@ -189,21 +280,33 @@ class Starlet(object):
         self.mu.mem_map(0x0d020000, 0x00001000) # AES interface
         self.mu.mem_map(0x0d030000, 0x00001000) # SHA interface
 
+
+    def __get_locinfo(self, addr):
+        """ Format string things """
+        if (self.symbols):
+            sym = self.find_symbol(addr)
+            return "in {} ({:08x})".format(sym, addr) if sym else "@ pc={:08x}"\
+                    .format(addr)
+        else:
+            return "@ pc={:08x}".format(addr)
+
+
     def __get_mmio_func(self, mmio_name):
         """ Generate an MMIO-handler function """
         def mmio_handler_func(uc, access, address, size, value, user_data):
             starlet = uc.parent
-            if (starlet.mmio_log_enabled == True):
-                # Avoid repeating logs by keeping track of the PC in the parent
-                this_pc = uc.reg_read(UC_ARM_REG_PC)
-                if (starlet.last_mmio_pc != this_pc):
-                    if (access == UC_MEM_WRITE):
-                        print("[*] pc={:08x} {} write\t addr={:08x} ({:08x})".format(this_pc, 
-                            mmio_name, address, value))
-                    elif (access == UC_MEM_READ):
-                        print("[*] pc={:08x} {} read\t addr={:08x}".format(this_pc, mmio_name,
-                            address))
-                starlet.last_mmio_pc = this_pc
+            this_pc = uc.reg_read(UC_ARM_REG_PC)
+
+
+            accinfo = "write" if access == UC_MEM_WRITE else "read"
+            valinfo = "{:08x}".format(value) if access == UC_MEM_WRITE else ""
+            locinfo = starlet.__get_locinfo(this_pc)
+
+            if (starlet.last_mmio_pc != this_pc):
+                print("[*] {} {} at {:08x}\t {}".format(mmio_name, accinfo,
+                    address, locinfo))
+                
+            starlet.last_mmio_pc = this_pc
         return mmio_handler_func
 
     def __register_mmio(self, name, addr, size):
@@ -226,6 +329,9 @@ class Starlet(object):
         def basic_block_hook(uc, address, size, user_data):
             starlet = uc.parent
 
+            #print("[*] Basic block at {:08x} ({})".format(address,
+            #    starlet.find_symbol(address)))
+
             # Potential service any outstanding I/O work
             starlet.io.update()
 
@@ -235,6 +341,7 @@ class Starlet(object):
 
     def __init_hook(self):
         # Note that the range isn't inclusive.
+        self.__register_mmio("NAND",    0x0d010000, 0x20)
         self.__register_mmio("IPC",     0x0d800000, 0xc)
         self.__register_mmio("TIMER",   0x0d800010, 0x4)
         self.__register_mmio("INTR",    0x0d800030, 0x2c)
@@ -246,7 +353,7 @@ class Starlet(object):
         self.__register_mmio("CLK",     0x0d8001b0, 0x38)
         self.__register_mmio("EFUSE",   0x0d8001ec, 0x4)
         self.__register_mmio("MISC",    0x0d8001f4, 0x2c)
-        self.__register_mmio("NAND",    0x0d010000, 0x20)
+        self.__register_mmio("FLUSH",   0x0d8b4228, 0x2)
 
         # Error handling hooks
         self.mu.hook_add(UC_HOOK_MEM_UNMAPPED, self.__get_err_unmapped_func())
@@ -266,7 +373,9 @@ class Starlet(object):
 
     # Memory access primitives
     def read32(self, addr): return unpack(">L", self.mu.mem_read(addr, 4))[0]
+    def read16(self, addr): return unpack(">H", self.mu.mem_read(addr, 2))[0]
     def write32(self, addr, val): self.mu.mem_write(addr, pack(">L", val))
+    def write16(self, addr, val): self.mu.mem_write(addr, pack(">H", val))
     def dma_write(self, addr, data): 
         self.mu.mem_write(addr, bytes(data))
     def dma_read(self, addr, size): return self.mu.mem_read(addr, size)
@@ -294,20 +403,20 @@ class Starlet(object):
 
 # -----------------------------------------------------------------------------
 
-if (len(argv) < 2):
-    print("usage: {} <ARM binary>".format(argv[0]))
+if (len(argv) < 3):
+    print("usage: {} <ARM binary> <NAND dump>".format(argv[0]))
     exit()
-else:
-    code_filename = argv[1]
 
 def sig_handle(sig, frame):
     print("[!] Caught SIGINT, halting ...")
     emu.halt()
 
 signal.signal(signal.SIGINT, sig_handle)
-emu = Starlet()
-emu.load_code(code_filename, 0x0d400000)
-#emu.add_breakpoint(0x0d401520)
-emu.run()
 
+
+emu = Starlet()
+emu.load_code(argv[1], 0x0d400000)
+emu.import_symbols("wow.csv")
+emu.import_nand(argv[2])
+emu.run()
 
