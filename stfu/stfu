@@ -1,0 +1,313 @@
+#!/usr/bin/python3
+""" stfu - STarlet FUzzer
+
+   This place is a message...  
+   and part of a system of messages ...
+   pay attention to it!
+
+                   Sending this message was important to us. 
+               We considered ourselves to be a powerful culture.
+
+                                      This place is not a place of honor ...  
+                             no highly esteemed deed is commemorated here... 
+                                                     nothing valued is here.
+"""
+
+from __future__ import print_function
+from unicorn import *
+from unicorn.arm_const import *
+from unicorn.unicorn_const import *
+from capstone import *
+
+import signal
+
+from hexdump import hexdump
+from binascii import hexlify, unhexlify
+
+from struct import pack, unpack
+from sys import argv
+
+NAND_FLAG_WAIT          = 0x08
+NAND_FLAG_WRITE         = 0x04
+NAND_FLAG_READ          = 0x02
+NAND_FLAG_ECC           = 0x01
+NAND_CMD_RESET          = 0x00
+NAND_CMD_READ0b         = 0x30
+NAND_PAGE_LEN           = 0x840
+
+class NANDInterface(object):
+    def __init__(self, parent):
+        self.starlet = parent
+        self.command = 0
+
+        # Mock NAND data
+        self.data = bytearray()
+        self.data += b'\xde\xad\xbe\xef' * 0x100000
+
+    def update(self):
+        ctrl = self.starlet.read32(0x0d010000)
+
+        # Handle a command
+        if (ctrl & 0x80000000):
+
+            mask = (ctrl & 0x1f000000) >> 24
+            cmd = (ctrl & 0x00ff0000) >> 16
+            flags = (ctrl & 0x0000f000) >> 12
+            datasize = (ctrl & 0x00000fff)
+
+            print("[*] NAND mask={:02x} cmd={:02x} flags={:02x} size={:04x}"\
+                    .format(ctrl, mask, cmd, flags, datasize))
+
+            # Just use command and size to infer what needs to happen?
+            if (cmd == NAND_CMD_RESET):
+                print("[*] NAND RESET")
+                self.clear_command(ctrl)
+            elif(cmd == NAND_CMD_READ0b):
+                addr0           = self.starlet.read32(0x0d010008)
+                addr1           = self.starlet.read32(0x0d01000c)
+                dma_data_addr   = self.starlet.read32(0x0d010010)
+                dma_ecc_addr    = self.starlet.read32(0x0d010014)
+
+                print("[*] NAND READ data={:08x} ecc={:08x} a0={:08x} a1={:08x}"\
+                    .format(dma_data_addr, dma_ecc_addr, addr0, addr1))
+
+                if (datasize == 0x840):
+                    nand_data = self.nand_read(addr0, addr1, datasize)
+                    self.starlet.dma_write(dma_data_addr, nand_data[0:0x800])
+                    self.starlet.dma_write(dma_ecc_addr, nand_data[0x800:0x840])
+                    self.clear_command(ctrl)
+                else:
+                    print("[*] NAND unimpl datasize")
+                    self.starlet.halt()
+            else:
+                print("[*] NAND: Unhandled cmd {:02x} ({:08x})".format(cmd, ctrl))
+                self.starlet.halt()
+
+    def clear_command(self, ctrl):
+        """ Clear NAND_CTRL busy bit exposed to ARM """
+        self.starlet.write32(0x0d010000, ctrl & 0x7fffffff)
+
+    def nand_read(self, addr0, addr1, size):
+        """ Return bytes from the underlying NAND device """
+        off = addr1 * NAND_PAGE_LEN
+        return self.data[off:off + size]
+
+
+class StarletIO(object):
+    def __init__(self, parent):
+        assert type(parent) == Starlet
+        self.timer = 0
+        self.starlet = parent
+        self.nand = NANDInterface(parent)
+
+    def update(self):
+        """ Update various aspects of I/O or chipset state """
+        self.timer += self.starlet.last_block_size * 0x10
+        self.starlet.write32(0x0d800010, self.timer)
+        self.nand.update()
+
+
+class Starlet(object):
+    def __init__(self):
+        self.running = False
+        self.code_loaded = False
+        self.mmio_log_enabled = True
+        self.last_block_size = 0
+        self.block_count = 0
+        self.last_mmio_pc = 0
+
+        self.dis_arm = Cs(CS_ARCH_ARM, CS_MODE_ARM | CS_MODE_BIG_ENDIAN)
+        self.dis_thumb = Cs(CS_ARCH_ARM, CS_MODE_THUMB | CS_MODE_BIG_ENDIAN)
+
+        self.mu = Uc(UC_ARCH_ARM, UC_MODE_ARM | UC_MODE_BIG_ENDIAN)
+        self.mu.parent = self
+        self.io = StarletIO(self)
+        self.__init_mmu()
+        self.__init_hook()
+
+    def __get_breakpoint_func(self):
+        def breakpoint_hook(uc, address, size, user_data):
+            starlet = uc.parent
+            print("[*] Breakpoint at pc={:08x}".format(address))
+
+            # Disassemble directly at the breakpoint
+            starlet.disas(address, 0x20);
+
+            starlet.halt()
+        return breakpoint_hook
+
+    def add_breakpoint(self, addr):
+        self.mu.hook_add(UC_HOOK_CODE, self.__get_breakpoint_func(), 
+                begin=addr, end=addr)
+
+    def disas(self, addr, size):
+        """ Disassemble some amount of bytes at address """
+        data = self.mu.mem_read(addr, size)
+
+        # FIXME: this isn't a good strategy
+        #if ((addr & 2) == 2):
+        #    print("[*] Disassembling in THUMB mode")
+        #    instrs = self.dis_thumb.disasm(data, addr, count=size)
+        #else:
+        #    print("[*] Disassembling in ARM mode")
+        #    instrs = self.dis_arm.disasm(data, addr, count=size)
+
+        instrs = self.dis_thumb.disasm(data, addr, count=size)
+
+        print("[!] Disassembly request at {:08x}".format(addr))
+        for instr in instrs:
+            ad = instr.address
+            ib = hexlify(instr.bytes).decode('utf-8')
+            mn = instr.mnemonic
+            op = instr.op_str
+            print("\t{:08x}: \t{}\t{}\t{}".format(ad, ib, mn, op))
+
+    def run(self):
+        assert self.code_loaded == True
+        try:
+            self.mu.emu_start(self.entrypoint, self.entrypoint + self.codelen)
+            self.running = True
+        except UcError as e:
+            print("[!] ERROR: %s".format(e))
+            self.dump_state()
+            self.running = False
+
+    def halt(self):
+        self.mu.emu_stop()
+        print("[!] Halted emulation")
+        self.dump_state()
+        self.running = False
+
+    def __init_mmu(self):
+        self.mu.mem_map(0x0d400000, 0x00020000) # SRAM
+        self.mu.mem_map(0x00000000, 0x01800000) # MEM1
+        self.mu.mem_map(0x10000000, 0x04000000) # MEM2
+        self.mu.mem_map(0x0d800000, 0x00000400) # Hollywood registers
+        self.mu.mem_map(0x0d806000, 0x00000400) # EXI registers
+        self.mu.mem_map(0x0d8b0000, 0x00008000) # Memory controller interface?
+        self.mu.mem_map(0x0d010000, 0x00001000) # NAND interface
+        self.mu.mem_map(0x0d020000, 0x00001000) # AES interface
+        self.mu.mem_map(0x0d030000, 0x00001000) # SHA interface
+
+    def __get_mmio_func(self, mmio_name):
+        """ Generate an MMIO-handler function """
+        def mmio_handler_func(uc, access, address, size, value, user_data):
+            starlet = uc.parent
+            if (starlet.mmio_log_enabled == True):
+                # Avoid repeating logs by keeping track of the PC in the parent
+                this_pc = uc.reg_read(UC_ARM_REG_PC)
+                if (starlet.last_mmio_pc != this_pc):
+                    if (access == UC_MEM_WRITE):
+                        print("[*] pc={:08x} {} write\t addr={:08x} ({:08x})".format(this_pc, 
+                            mmio_name, address, value))
+                    elif (access == UC_MEM_READ):
+                        print("[*] pc={:08x} {} read\t addr={:08x}".format(this_pc, mmio_name,
+                            address))
+                starlet.last_mmio_pc = this_pc
+        return mmio_handler_func
+
+    def __register_mmio(self, name, addr, size):
+        """ Register an MMIO hook for some address space """
+        self.mu.hook_add(UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, 
+                self.__get_mmio_func(name), begin=addr, end=(addr + size))
+
+    def __get_err_unmapped_func(self):
+        """ Generate a handler for un-mapped memory accesses """
+        def hook_unmapped(uc, access, address, size, value, user_data):
+            pc = uc.reg_read(UC_ARM_REG_PC)
+            acc_type = "write" if access == UC_MEM_WRITE_UNMAPPED else "read"
+            print("[!] MMU error: pc={:08x} Unmapped {} {:08x} on {:08x}".format(
+                pc, acc_type, value, address))
+            return False
+        return hook_unmapped
+
+    def __get_basic_block_func(self):
+        """ Generate a basic block hook """
+        def basic_block_hook(uc, address, size, user_data):
+            starlet = uc.parent
+
+            # Potential service any outstanding I/O work
+            starlet.io.update()
+
+            starlet.last_block_size = size
+            starlet.block_count += 1
+        return basic_block_hook
+
+    def __init_hook(self):
+        # Note that the range isn't inclusive.
+        self.__register_mmio("IPC",     0x0d800000, 0xc)
+        self.__register_mmio("TIMER",   0x0d800010, 0x4)
+        self.__register_mmio("INTR",    0x0d800030, 0x2c)
+        self.__register_mmio("PROT",    0x0d800060, 0x1c)
+        self.__register_mmio("PPCGPIO", 0x0d8000c0, 0x18)
+        self.__register_mmio("ARMGPIO", 0x0d8000dc, 0x20)
+        self.__register_mmio("AHB",     0x0d800100, 0x4c)
+        self.__register_mmio("PLAT",    0x0d800180, 0x20)
+        self.__register_mmio("CLK",     0x0d8001b0, 0x38)
+        self.__register_mmio("EFUSE",   0x0d8001ec, 0x4)
+        self.__register_mmio("MISC",    0x0d8001f4, 0x2c)
+        self.__register_mmio("NAND",    0x0d010000, 0x20)
+
+        # Error handling hooks
+        self.mu.hook_add(UC_HOOK_MEM_UNMAPPED, self.__get_err_unmapped_func())
+
+        # This hook handles MMIO
+        self.mu.hook_add(UC_HOOK_BLOCK, self.__get_basic_block_func())
+
+    def load_code(self, filename, addr):
+        """ Load some binary into memory at some address """
+        assert self.running == False
+        with open(filename, "rb") as f:
+            ARM_CODE = f.read()
+        self.mu.mem_write(addr, ARM_CODE)
+        self.entrypoint = addr
+        self.codelen = len(ARM_CODE)
+        self.code_loaded = True
+
+    # Memory access primitives
+    def read32(self, addr): return unpack(">L", self.mu.mem_read(addr, 4))[0]
+    def write32(self, addr, val): self.mu.mem_write(addr, pack(">L", val))
+    def dma_write(self, addr, data): 
+        self.mu.mem_write(addr, bytes(data))
+    def dma_read(self, addr, size): return self.mu.mem_read(addr, size)
+
+    def dump_state(self):
+        pc = self.mu.reg_read(UC_ARM_REG_PC)
+        lr = self.mu.reg_read(UC_ARM_REG_LR)
+        sp = self.mu.reg_read(UC_ARM_REG_SP)
+        r0 = self.mu.reg_read(UC_ARM_REG_R0)
+        r1 = self.mu.reg_read(UC_ARM_REG_R1)
+        r2 = self.mu.reg_read(UC_ARM_REG_R2)
+        r3 = self.mu.reg_read(UC_ARM_REG_R3)
+        r4 = self.mu.reg_read(UC_ARM_REG_R4)
+        r5 = self.mu.reg_read(UC_ARM_REG_R5)
+        r6 = self.mu.reg_read(UC_ARM_REG_R6)
+        r7 = self.mu.reg_read(UC_ARM_REG_R7)
+        r8 = self.mu.reg_read(UC_ARM_REG_R8)
+        r9 = self.mu.reg_read(UC_ARM_REG_R9)
+
+        fmt = """pc={:08x} lr={:08x} sp={:08x}\
+            \nr0={:08x} r1={:08x} r2={:08x} r3={:08x} r4={:08x} r5={:08x}\
+            \nr6={:08x} r7={:08x} r8={:08x} r9={:08x} """
+        print(fmt.format(pc,lr,sp,r0,r1,r2,r3,r4,r5,r6,r7,r8,r9))
+
+
+# -----------------------------------------------------------------------------
+
+if (len(argv) < 2):
+    print("usage: {} <ARM binary>".format(argv[0]))
+    exit()
+else:
+    code_filename = argv[1]
+
+def sig_handle(sig, frame):
+    print("[!] Caught SIGINT, halting ...")
+    emu.halt()
+
+signal.signal(signal.SIGINT, sig_handle)
+emu = Starlet()
+emu.load_code(code_filename, 0x0d400000)
+#emu.add_breakpoint(0x0d401520)
+emu.run()
+
+

@@ -34,3 +34,5 @@
 !src/boot1-extract/Makefile
 !src/boot1-extract/sha1.c
 !src/boot1-extract/sha1.h
+!stfu/
+!stfu/stfu
