@@ -43,6 +43,10 @@ class DummyInterface(object):
 
 import hashlib
 
+from libstfu.ffi_sha import *
+import ctypes
+
+
 class SHAInterface(object):
     """ You *may* have to do wack FFI shit to call into some other SHA
     implementation, considering that this has not worked in the past for me
@@ -51,18 +55,20 @@ class SHAInterface(object):
         self.starlet = parent
         self.dma_src = 0
         self.req_done = False
-        self.hbuf = bytearray(b'\x00'*0x14)
 
     def update(self):
         if (self.req_done == True):
-            self.starlet.write32(0x0d030008, unpack(">L",self.hbuf[0x00:0x04])[0])
-            self.starlet.write32(0x0d03000c, unpack(">L",self.hbuf[0x04:0x08])[0])
-            self.starlet.write32(0x0d030010, unpack(">L",self.hbuf[0x08:0x0c])[0])
-            self.starlet.write32(0x0d030014, unpack(">L",self.hbuf[0x0c:0x10])[0])
-            self.starlet.write32(0x0d030018, unpack(">L",self.hbuf[0x10:0x14])[0])
 
-            hstr = hexlify(self.hbuf).decode('utf-8')
-            print("[*] SHA new digest is {}".format(hstr))
+            self.starlet.write32(0x0d030008, ffi_sha1_get(0))
+            self.starlet.write32(0x0d03000c, ffi_sha1_get(1))
+            self.starlet.write32(0x0d030010, ffi_sha1_get(2))
+            self.starlet.write32(0x0d030014, ffi_sha1_get(3))
+            self.starlet.write32(0x0d030018, ffi_sha1_get(4))
+
+            print("[*] SHA state: {:08x}{:08x}{:08x}{:08x}{:08x}".format(
+                ffi_sha1_get(0), ffi_sha1_get(1), ffi_sha1_get(2),
+                ffi_sha1_get(3), ffi_sha1_get(4)))
+
             self.starlet.write32(0x0d030000, 
                 self.starlet.read32(0x0d030000) & 0x7fffffff)
             self.req_done = False
@@ -72,20 +78,26 @@ class SHAInterface(object):
         if (access == UC_MEM_WRITE):
             if (addr == 0x0d030000):
                 print("[*] SHA command write {:08x}".format(value))
+
                 if ((value & 0x80000000) != 0):
                     num_bytes = ((value & 0xfff) + 1) * 0x40
+
                     print("[*] SHA started hashing {:08x} bytes at {:08x}".format(\
                             num_bytes, self.dma_src))
+
+                    print("[*] SHA state: {:08x}{:08x}{:08x}{:08x}{:08x}".format(
+                        ffi_sha1_get(0), ffi_sha1_get(1), ffi_sha1_get(2),
+                        ffi_sha1_get(3), ffi_sha1_get(4)))
+
+
+
                     src_data = self.starlet.dma_read(self.dma_src, num_bytes)
+                    hexdump_indent(src_data[0:0x10], 1)
 
-                    print("[*] SHA current digest is {}".format(\
-                            hexlify(self.hbuf).decode('utf-8')))
-
-                    h = hashlib.sha1(self.hbuf)
-                    h.update(src_data)
-                    self.hbuf = h.digest()
-
-
+                    ffi_ptr = ctypes.c_char * len(src_data)
+                    ffi_sha1_input(ffi_ptr.from_buffer(src_data), len(src_data))
+                    #ffi_sha1_input(src_data, len(src_data))
+                    self.dma_src += num_bytes
                     self.req_done = True
 
             elif (addr == 0x0d030004):
@@ -94,19 +106,19 @@ class SHAInterface(object):
 
             elif (addr == 0x0d030008): 
                 print("[*] SHA write {:08x} to h[0]".format(value))
-                self.hbuf[0x00:0x04] = pack(">L", value)
+                ffi_sha1_set(0, value)
             elif (addr == 0x0d03000c): 
                 print("[*] SHA write {:08x} to h[1]".format(value))
-                self.hbuf[0x04:0x08] = pack(">L", value)
+                ffi_sha1_set(1, value)
             elif (addr == 0x0d030010): 
                 print("[*] SHA write {:08x} to h[2]".format(value))
-                self.hbuf[0x08:0x0c] = pack(">L", value)
+                ffi_sha1_set(2, value)
             elif (addr == 0x0d030014): 
                 print("[*] SHA write {:08x} to h[3]".format(value))
-                self.hbuf[0x0c:0x10] = pack(">L", value)
+                ffi_sha1_set(3, value)
             elif (addr == 0x0d030018): 
                 print("[*] SHA write {:08x} to h[4]".format(value))
-                self.hbuf[0x10:0x14] = pack(">L", value)
+                ffi_sha1_set(4, value)
 
 # -----------------------------------------------------------------------------
 

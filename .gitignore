@@ -39,3 +39,7 @@
 !stfu/libstfu
 !stfu/libstfu/io.py
 !stfu/libstfu/util.py
+!stfu/libstfu/Makefile
+!stfu/libstfu/ffi_sha.py
+!stfu/libstfu/sha1.c
+!stfu/libstfu/sha1.h

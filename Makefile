@@ -8,3 +8,5 @@ all:
 	@echo "[*] Building es_gettitle_exec poc ..."
 	make -C src/es_gettitle_exec
 	@echo ""
+
+	make -C stfu/libstfu
