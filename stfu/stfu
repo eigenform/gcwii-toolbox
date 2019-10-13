@@ -20,156 +20,21 @@ from unicorn.unicorn_const import *
 from capstone import *
 
 import signal
-
-from hexdump import hexdump
 from binascii import hexlify, unhexlify
-
 from struct import pack, unpack
 from sys import argv
 
-
-def hexdump_indent(data, lvl):
-    """ Hexdump wrapper with indentation """
-    indent = '\t' * lvl
-    for line in hexdump(data, result='generator'):
-        print("{}{}".format(indent, line))
-
-
-class AHBInterface(object):
-    def __init__(self, parent):
-        self.starlet = parent
-        self.flush_req = 0
-        self.spare0_flags = 0
-
-    def update(self):
-        # Immediately ACK flush requests (i think this is how this works)
-        req = self.starlet.read16(0x0d8b4228)
-        if (req != 0):
-            print("[*] AHB acked flush request {:04x}".format(req))
-            self.starlet.write16(0x0d8b422a, req)
-
-        spare0 = self.starlet.read32(0x0d800188)
-        if (self.spare0_flags != spare0):
-            self.spare0_flags = spare0
-            boot0 = self.starlet.read32(0x0d80018c)
-            if ((spare0 & 0x10000) != 0x10000): 
-                boot0 |= 9
-            else:
-                boot0 &= 0xffffffff6
-            self.starlet.write32(0x0d80018c, boot0)
-            print("[*] PLAT: Spare 0 write {:08x}, set boot0 to {:08x}"\
-                    .format(spare0, boot0))
-
-
-class GPIOInterface(object):
-    def __init__(self, parent):
-        self.starlet = parent
-        self.arm_out = 0
-
-    def update(self):
-        out = self.starlet.read32(0x0d8000e0)
-        if (self.arm_out != out):
-            print("[!] ARMGPIO output set to {:08x}".format(out))
-            self.arm_out = out
-        
-
-NAND_FLAG_WAIT          = 0x08
-NAND_FLAG_WRITE         = 0x04
-NAND_FLAG_READ          = 0x02
-NAND_FLAG_ECC           = 0x01
-NAND_CMD_RESET          = 0x00
-NAND_CMD_READ0b         = 0x30
-NAND_PAGE_LEN           = 0x840
-
-class NANDInterface(object):
-    def __init__(self, parent):
-        self.starlet = parent
-        self.command = 0
-
-        # Mock NAND data
-        self.data = bytearray()
-        #self.data += b'\xde\xad\xbe\xef' * 0x100000
-
-    def update(self):
-        ctrl = self.starlet.read32(0x0d010000)
-
-        # Handle a command
-        if (ctrl & 0x80000000):
-
-            mask = (ctrl & 0x1f000000) >> 24
-            cmd = (ctrl & 0x00ff0000) >> 16
-            flags = (ctrl & 0x0000f000) >> 12
-            datasize = (ctrl & 0x00000fff)
-
-            print("[*] NAND mask={:02x} cmd={:02x} flags={:02x} size={:04x}"\
-                    .format(mask, cmd, flags, datasize))
-
-            # Just use command and size to infer what needs to happen?
-            if (cmd == NAND_CMD_RESET):
-                print("[*] NAND RESET")
-                self.clear_command(ctrl)
-            elif(cmd == NAND_CMD_READ0b):
-                addr0           = self.starlet.read32(0x0d010008)
-                addr1           = self.starlet.read32(0x0d01000c)
-                dma_data_addr   = self.starlet.read32(0x0d010010)
-                dma_ecc_addr    = self.starlet.read32(0x0d010014)
-
-                print("[*] NAND READ data={:08x} ecc={:08x} a0={:08x} a1={:08x}"\
-                    .format(dma_data_addr, dma_ecc_addr, addr0, addr1))
-
-                if (datasize == 0x840):
-                    nand_data = self.nand_read(addr0, addr1, datasize)
-                    self.starlet.dma_write(dma_data_addr, nand_data[0:0x800])
-                    self.starlet.dma_write(dma_ecc_addr, nand_data[0x800:0x840])
-
-                    if ((flags & NAND_FLAG_ECC) == NAND_FLAG_ECC):
-                        self.starlet.write32(((dma_ecc_addr ^ 0x40) + 0x00), 0)
-                        self.starlet.write32(((dma_ecc_addr ^ 0x40) + 0x04), 0)
-                        self.starlet.write32(((dma_ecc_addr ^ 0x40) + 0x08), 0)
-                        self.starlet.write32(((dma_ecc_addr ^ 0x40) + 0x0c), 0)
-
-                    print("[!] NAND DMA write to {:08x}".format(dma_data_addr))
-                    hexdump_indent(self.starlet.dma_read(dma_data_addr,0x840), 1)
-                    self.clear_command(ctrl)
-                else:
-                    print("[*] NAND unimpl datasize")
-                    self.starlet.halt()
-            else:
-                print("[*] NAND: Unhandled cmd {:02x} ({:08x})".format(cmd, ctrl))
-                self.starlet.halt()
-
-    def clear_command(self, ctrl):
-        """ Clear NAND_CTRL busy bit exposed to ARM """
-        self.starlet.write32(0x0d010000, ctrl & 0x7fffffff)
-
-    def nand_read(self, addr0, addr1, size):
-        """ Return bytes from the underlying NAND device """
-        off = addr1 * NAND_PAGE_LEN
-        return self.data[off:off + size]
-
-
-class StarletIO(object):
-    def __init__(self, parent):
-        assert type(parent) == Starlet
-        self.timer = 0
-        self.starlet = parent
-        self.nand = NANDInterface(parent)
-        self.ahb = AHBInterface(parent)
-        self.gpio = GPIOInterface(parent)
-
-    def update(self):
-        """ Update various aspects of I/O or chipset state """
-        self.timer += self.starlet.last_block_size * 0x10
-        self.starlet.write32(0x0d800010, self.timer)
-        self.nand.update()
-        self.ahb.update()
-        self.gpio.update()
+from libstfu.io import *
+from libstfu.util import *
 
 
 class Starlet(object):
     def __init__(self):
         self.running = False
         self.code_loaded = False
+        self.code_entrypoint = None
+        self.mmio_logging = True
+        self.use_boot0 = False
         self.symbols = {}
         self.last_block_size = 0
         self.block_count = 0
@@ -183,18 +48,28 @@ class Starlet(object):
         self.io = StarletIO(self)
         self.__init_mmu()
         self.__init_hook()
+
+    def load_boot0(self, filename):
+        with open(filename, "rb") as f:
+            data = f.read()
+        self.mu.mem_write(0xffff0000, data)
     
-    def import_nand(self, filename):
+    def load_nand(self, filename):
         """ Load a NAND dump (reading it all into memory at once) """
         with open(filename, "rb") as f:
             self.io.nand.data = f.read()
         print("[*] Imported NAND from {} ({:08x})".format(filename,
             len(self.io.nand.data)))
 
-
     def find_symbol(self, addr):
-        target = min(self.symbols, key=lambda x: abs(x - addr))
-        return self.symbols[target]
+        """ wow this is awful """
+        syms = [ addr for addr in self.symbols ]
+        syms.sort()
+        target = min(range(len(syms)), key=lambda x: abs(syms[x] - addr))
+        if (syms[target] > addr):
+            target = target - 1
+        func_addr = syms[target]
+        return self.symbols[func_addr]
 
     def get_symbol(self, addr):
         """ Directly fetch a symbol """
@@ -203,7 +78,7 @@ class Starlet(object):
         else:
             return None
 
-    def import_symbols(self, filename):
+    def load_symbols(self, filename):
         """ this is awful """
         assert self.running == False
         with open(filename, "rb") as f:
@@ -215,6 +90,12 @@ class Starlet(object):
                 self.symbols[addr] = name
         print("[*] Imported {} symbols from {}".format(len(self.symbols),
             filename))
+
+    def __get_logrange_func(self):
+        def logrange_hook(uc, address, size, user_data):
+            starlet = uc.parent
+            print("[*] Logpoint at {}".format(self.__get_locinfo(address)))
+        return logrange_hook
 
     def __get_breakpoint_func(self):
         def breakpoint_hook(uc, address, size, user_data):
@@ -230,6 +111,10 @@ class Starlet(object):
     def add_breakpoint(self, addr):
         self.mu.hook_add(UC_HOOK_CODE, self.__get_breakpoint_func(), 
                 begin=addr, end=addr)
+
+    def add_logrange(self, addr, size):
+        self.mu.hook_add(UC_HOOK_CODE, self.__get_logrange_func(),
+                begin=addr, end=(addr+size))
 
     def disas(self, addr, size):
         """ Disassemble some amount of bytes at address """
@@ -255,8 +140,11 @@ class Starlet(object):
 
     def run(self):
         assert self.code_loaded == True
+        if (self.use_boot0):
+            self.code_entrypoint = 0xffff0000
         try:
-            self.mu.emu_start(self.entrypoint, self.entrypoint + self.codelen)
+            self.mu.emu_start(self.code_entrypoint, 
+                    self.code_entrypoint + self.codelen)
             self.running = True
         except UcError as e:
             print("[!] ERROR: %s".format(e))
@@ -270,6 +158,8 @@ class Starlet(object):
         self.running = False
 
     def __init_mmu(self):
+        self.mu.mem_map(0xffff0000, 0x00002000) # SRAM
+
         self.mu.mem_map(0x0d400000, 0x00020000) # SRAM
         self.mu.mem_map(0x00000000, 0x01800000) # MEM1
         self.mu.mem_map(0x10000000, 0x04000000) # MEM2
@@ -291,12 +181,18 @@ class Starlet(object):
             return "@ pc={:08x}".format(addr)
 
 
-    def __get_mmio_func(self, mmio_name):
+    def __get_mmio_func(self, mmio_name, io_device):
         """ Generate an MMIO-handler function """
         def mmio_handler_func(uc, access, address, size, value, user_data):
             starlet = uc.parent
-            this_pc = uc.reg_read(UC_ARM_REG_PC)
 
+            # Do some device-specific function
+            io_device.on_access(access, address, size, value)
+
+            if (starlet.mmio_logging == False):
+                return True
+
+            this_pc = uc.reg_read(UC_ARM_REG_PC)
 
             accinfo = "write" if access == UC_MEM_WRITE else "read"
             valinfo = "{:08x}".format(value) if access == UC_MEM_WRITE else ""
@@ -309,10 +205,13 @@ class Starlet(object):
             starlet.last_mmio_pc = this_pc
         return mmio_handler_func
 
-    def __register_mmio(self, name, addr, size):
-        """ Register an MMIO hook for some address space """
+    def __register_mmio(self, name, addr, size, io_device=None):
+        """ Register an MMIO hook for some address space.  """
+        if (io_device == None):
+            io_device = self.io.dummy
         self.mu.hook_add(UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, 
-                self.__get_mmio_func(name), begin=addr, end=(addr + size))
+                self.__get_mmio_func(name, io_device), 
+                begin=addr, end=(addr + size))
 
     def __get_err_unmapped_func(self):
         """ Generate a handler for un-mapped memory accesses """
@@ -329,8 +228,8 @@ class Starlet(object):
         def basic_block_hook(uc, address, size, user_data):
             starlet = uc.parent
 
-            #print("[*] Basic block at {:08x} ({})".format(address,
-            #    starlet.find_symbol(address)))
+            print("[*] Basic block at {:08x} ({})".format(address,
+                starlet.find_symbol(address)))
 
             # Potential service any outstanding I/O work
             starlet.io.update()
@@ -341,7 +240,12 @@ class Starlet(object):
 
     def __init_hook(self):
         # Note that the range isn't inclusive.
+
         self.__register_mmio("NAND",    0x0d010000, 0x20)
+        self.__register_mmio("AES",     0x0d020000, 0x20, self.io.aes)
+        #self.__register_mmio("AES",     0x0d020000, 0x20)
+        self.__register_mmio("SHA1",    0x0d030000, 0x20)
+
         self.__register_mmio("IPC",     0x0d800000, 0xc)
         self.__register_mmio("TIMER",   0x0d800010, 0x4)
         self.__register_mmio("INTR",    0x0d800030, 0x2c)
@@ -353,6 +257,7 @@ class Starlet(object):
         self.__register_mmio("CLK",     0x0d8001b0, 0x38)
         self.__register_mmio("EFUSE",   0x0d8001ec, 0x4)
         self.__register_mmio("MISC",    0x0d8001f4, 0x2c)
+
         self.__register_mmio("FLUSH",   0x0d8b4228, 0x2)
 
         # Error handling hooks
@@ -367,7 +272,7 @@ class Starlet(object):
         with open(filename, "rb") as f:
             ARM_CODE = f.read()
         self.mu.mem_write(addr, ARM_CODE)
-        self.entrypoint = addr
+        self.code_entrypoint = addr
         self.codelen = len(ARM_CODE)
         self.code_loaded = True
 
@@ -416,7 +321,17 @@ signal.signal(signal.SIGINT, sig_handle)
 
 emu = Starlet()
 emu.load_code(argv[1], 0x0d400000)
-emu.import_symbols("wow.csv")
-emu.import_nand(argv[2])
+emu.load_symbols("wow.csv")
+emu.load_nand(argv[2])
+
+emu.load_boot0("boot0.bin")
+emu.use_boot0 = True
+
+emu.mmio_logging = True
+
+# skyeye boot1 disable sleep() patch
+#emu.write16(0x0d403d94, 0x4770)
+
+#emu.add_logrange(0x0d400260, 0x0d400346 - 0x0d400260)
 emu.run()
 
