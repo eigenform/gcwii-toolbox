@@ -228,8 +228,8 @@ class Starlet(object):
         def basic_block_hook(uc, address, size, user_data):
             starlet = uc.parent
 
-            #print("[*] Basic block at {:08x} ({})".format(address,
-            #    starlet.find_symbol(address)))
+            print("[*] Basic block at {:08x} ({})".format(address,
+                starlet.find_symbol(address)))
 
             # Potential service any outstanding I/O work
             starlet.io.update()
@@ -255,7 +255,7 @@ class Starlet(object):
         self.__register_mmio("AHB",     0x0d800100, 0x4c)
         self.__register_mmio("PLAT",    0x0d800180, 0x20)
         self.__register_mmio("CLK",     0x0d8001b0, 0x38)
-        self.__register_mmio("EFUSE",   0x0d8001ec, 0x4)
+        self.__register_mmio("EFUSE",   0x0d8001ec, 0x4, self.io.otp)
         self.__register_mmio("MISC",    0x0d8001f4, 0x2c)
 
         self.__register_mmio("FLUSH",   0x0d8b4228, 0x2)
@@ -275,6 +275,13 @@ class Starlet(object):
         self.code_entrypoint = addr
         self.codelen = len(ARM_CODE)
         self.code_loaded = True
+
+    def load_otp(self, filename):
+        with open(filename, "rb") as f:
+            OTP_DATA = f.read()
+        self.io.otp.data = OTP_DATA
+        print("[*] Loaded {:08x} bytes from {} to OTP".format(len(OTP_DATA),
+            filename))
 
     # Memory access primitives
     def read32(self, addr): return unpack(">L", self.mu.mem_read(addr, 4))[0]
@@ -320,18 +327,17 @@ signal.signal(signal.SIGINT, sig_handle)
 
 
 emu = Starlet()
-emu.load_code(argv[1], 0x0d400000)
-emu.load_symbols("wow.csv")
-emu.load_nand(argv[2])
-
-emu.load_boot0("boot0.bin")
+emu.mmio_logging = True
 emu.use_boot0 = True
 
-emu.mmio_logging = True
+emu.load_symbols("wow.csv")
+emu.load_boot0("boot0.bin")
+emu.load_nand(argv[2])
+emu.load_otp("otp.bin")
 
-# skyeye boot1 disable sleep() patch
-#emu.write16(0x0d403d94, 0x4770)
-
+#emu.write16(0x0d403d94, 0x4770) # skyeye boot1 sleep() patch
 #emu.add_logrange(0x0d400260, 0x0d400346 - 0x0d400260)
+
+emu.load_code(argv[1], 0x0d400000)
 emu.run()
 

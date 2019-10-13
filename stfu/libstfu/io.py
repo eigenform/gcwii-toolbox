@@ -21,6 +21,7 @@ class StarletIO(object):
         self.gpio = GPIOInterface(parent)
         self.aes = AESInterface(parent)
         self.sha = SHAInterface(parent)
+        self.otp = OTPInterface(parent)
 
     def update(self):
         """ Update various aspects of I/O or chipset state """
@@ -54,6 +55,14 @@ class SHAInterface(object):
 
     def update(self):
         if (self.req_done == True):
+            self.starlet.write32(0x0d030008, unpack(">L",self.hbuf[0x00:0x04])[0])
+            self.starlet.write32(0x0d03000c, unpack(">L",self.hbuf[0x04:0x08])[0])
+            self.starlet.write32(0x0d030010, unpack(">L",self.hbuf[0x08:0x0c])[0])
+            self.starlet.write32(0x0d030014, unpack(">L",self.hbuf[0x0c:0x10])[0])
+            self.starlet.write32(0x0d030018, unpack(">L",self.hbuf[0x10:0x14])[0])
+
+            hstr = hexlify(self.hbuf).decode('utf-8')
+            print("[*] SHA new digest is {}".format(hstr))
             self.starlet.write32(0x0d030000, 
                 self.starlet.read32(0x0d030000) & 0x7fffffff)
             self.req_done = False
@@ -76,30 +85,28 @@ class SHAInterface(object):
                     h.update(src_data)
                     self.hbuf = h.digest()
 
-                    print("[*] SHA new digest is {}".format(\
-                            hexlify(self.hbuf).decode('utf-8')))
 
-                    self.starlet.write32(0x0d030008, 
-                            unpack(">L",self.hbuf[0x00:0x04])[0])
-                    self.starlet.write32(0x0d03000c, 
-                            unpack(">L",self.hbuf[0x04:0x08])[0])
-                    self.starlet.write32(0x0d030010, 
-                            unpack(">L",self.hbuf[0x08:0x0c])[0])
-                    self.starlet.write32(0x0d030014, 
-                            unpack(">L",self.hbuf[0x0c:0x10])[0])
-                    self.starlet.write32(0x0d030018, 
-                            unpack(">L",self.hbuf[0x10:0x14])[0])
                     self.req_done = True
 
             elif (addr == 0x0d030004):
                 print("[*] SHA set source address to {:08x}".format(value))
                 self.dma_src = value
 
-            elif (addr == 0x0d030008): self.hbuf[0x00:0x04] = pack(">L", value)
-            elif (addr == 0x0d03000c): self.hbuf[0x04:0x08] = pack(">L", value)
-            elif (addr == 0x0d030010): self.hbuf[0x08:0x0c] = pack(">L", value)
-            elif (addr == 0x0d030014): self.hbuf[0x0c:0x10] = pack(">L", value)
-            elif (addr == 0x0d030018): self.hbuf[0x10:0x14] = pack(">L", value)
+            elif (addr == 0x0d030008): 
+                print("[*] SHA write {:08x} to h[0]".format(value))
+                self.hbuf[0x00:0x04] = pack(">L", value)
+            elif (addr == 0x0d03000c): 
+                print("[*] SHA write {:08x} to h[1]".format(value))
+                self.hbuf[0x04:0x08] = pack(">L", value)
+            elif (addr == 0x0d030010): 
+                print("[*] SHA write {:08x} to h[2]".format(value))
+                self.hbuf[0x08:0x0c] = pack(">L", value)
+            elif (addr == 0x0d030014): 
+                print("[*] SHA write {:08x} to h[3]".format(value))
+                self.hbuf[0x0c:0x10] = pack(">L", value)
+            elif (addr == 0x0d030018): 
+                print("[*] SHA write {:08x} to h[4]".format(value))
+                self.hbuf[0x10:0x14] = pack(">L", value)
 
 # -----------------------------------------------------------------------------
 
@@ -232,6 +239,34 @@ class AHBInterface(object):
                     .format(spare0, boot0))
 
 # -----------------------------------------------------------------------------
+class OTPInterface(object):
+    def __init__(self, parent):
+        self.starlet = parent
+        self.data = bytearray()
+
+    def update(self):
+        return
+
+    def on_access(self, access, address, size, value):
+        """ Read commands are effectively instantaneous """
+        if (access == UC_MEM_WRITE):
+            if (address == 0x0d8001ec):
+                if ((value & 0x80000000) != 0):
+                    addr = value & 0x1f
+                    otp_word = unpack(">L", self.data[addr*4:(addr*4)+4])[0]
+                    self.starlet.write32(0x0d8001f0, otp_word)
+
+                    print("[*] OTP: Command for addr={:02x}, read {:08x}".format(\
+                            addr, otp_word))
+
+                    # ?
+                    self.starlet.write32(0x0d8001ec, 0)
+
+            elif (address == 0x0d8001f0):
+                print("[*] OTP: Write on OTP_DATA (?) {:08x}".format(value))
+
+
+# -----------------------------------------------------------------------------
 
 class GPIOInterface(object):
     def __init__(self, parent):
@@ -317,6 +352,16 @@ class NANDInterface(object):
                     hexdump_indent(self.starlet.dma_read(dma_data_addr,0x100), 1)
                     print("[!] NAND DMA write to {:08x}".format(dma_ecc_addr))
                     hexdump_indent(self.starlet.dma_read(dma_ecc_addr,0x40), 1)
+
+                    if ((flags & NAND_FLAG_ECC) != 0):
+                        for i in range(0, 4):
+                            data = nand_bytes[i * 512:(i * 512)+512]
+                            daddr = (dma_ecc_addr ^ 0x40) + i * 4
+                            ecc = self.calc_ecc(data)
+                            print("[*] NAND write ECC {:08x} to {:08x}".format(\
+                                    ecc, daddr))
+                            self.starlet.write32(daddr, ecc)
+
                     self.clear_command(ctrl)
 
                 else:
@@ -335,4 +380,46 @@ class NANDInterface(object):
         """ Return bytes from the underlying NAND device """
         off = addr1 * NAND_PAGE_LEN
         return self.data[off:off + size]
+
+    def parity(self, x):
+        y = 0
+        while (x != 0):
+            y ^= (x & 1)
+            x >>= 1
+        return y
+
+    def calc_ecc(self, data):
+        ecc = [ 0, 0, 0, 0 ]
+        a = []
+        for i in range(0, 12):
+            a.append([0, 0])
+
+        for i in range(0, 512):
+            for j in range(0, 9):
+                a[3+j][(i>>j)&1] ^= data[i]
+
+        x = a[3][0] ^ a[3][1]
+        a[0][0] = x & 0x55
+        a[0][1] = x & 0xaa
+        a[1][0] = x & 0x33
+        a[1][1] = x & 0xcc
+        a[2][0] = x & 0x0f
+        a[2][1] = x & 0xf0
+
+        for j in range(0, 12):
+            a[j][0] = self.parity(a[j][0])
+            a[j][1] = self.parity(a[j][1])
+
+        a0 = 0
+        a1 = 0
+        for j in range(0, 12):
+            a0 |= (a[j][0] << j) & 0xffffffff
+            a1 |= (a[j][1] << j) & 0xffffffff
+
+        ecc[0] = a0 & 0xff;
+        ecc[1] = (a0 >> 8) & 0xff
+        ecc[2] = a1 & 0xff
+        ecc[3] = (a1 >> 8) & 0xff
+
+        return (ecc[0] << 24 | ecc[1] << 16 | ecc[2] << 8 | ecc[3])
 
