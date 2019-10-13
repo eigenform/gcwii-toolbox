@@ -228,8 +228,8 @@ class Starlet(object):
         def basic_block_hook(uc, address, size, user_data):
             starlet = uc.parent
 
-            print("[*] Basic block at {:08x} ({})".format(address,
-                starlet.find_symbol(address)))
+            #print("[*] Basic block at {:08x} ({})".format(address,
+            #    starlet.find_symbol(address)))
 
             # Potential service any outstanding I/O work
             starlet.io.update()
@@ -240,11 +240,11 @@ class Starlet(object):
 
     def __init_hook(self):
         # Note that the range isn't inclusive.
+        # FIXME: redo handlers for all these devices probably
 
         self.__register_mmio("NAND",    0x0d010000, 0x20)
         self.__register_mmio("AES",     0x0d020000, 0x20, self.io.aes)
-        #self.__register_mmio("AES",     0x0d020000, 0x20)
-        self.__register_mmio("SHA1",    0x0d030000, 0x20)
+        self.__register_mmio("SHA1",    0x0d030000, 0x20, self.io.sha)
 
         self.__register_mmio("IPC",     0x0d800000, 0xc)
         self.__register_mmio("TIMER",   0x0d800010, 0x4)

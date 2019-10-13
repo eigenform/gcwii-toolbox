@@ -20,6 +20,7 @@ class StarletIO(object):
         self.ahb = AHBInterface(parent)
         self.gpio = GPIOInterface(parent)
         self.aes = AESInterface(parent)
+        self.sha = SHAInterface(parent)
 
     def update(self):
         """ Update various aspects of I/O or chipset state """
@@ -27,6 +28,7 @@ class StarletIO(object):
         self.starlet.write32(0x0d800010, self.timer)
         self.nand.update()
         self.aes.update()
+        self.sha.update()
         self.ahb.update()
         self.gpio.update()
 
@@ -36,9 +38,70 @@ class DummyInterface(object):
     def __init__(self): return
     def on_access(self, access, address, size, value): return
 
+# -----------------------------------------------------------------------------
+
+import hashlib
+
+class SHAInterface(object):
+    """ You *may* have to do wack FFI shit to call into some other SHA
+    implementation, considering that this has not worked in the past for me
+    """
+    def __init__(self, parent):
+        self.starlet = parent
+        self.dma_src = 0
+        self.req_done = False
+        self.hbuf = bytearray(b'\x00'*0x14)
+
+    def update(self):
+        if (self.req_done == True):
+            self.starlet.write32(0x0d030000, 
+                self.starlet.read32(0x0d030000) & 0x7fffffff)
+            self.req_done = False
+        return
+
+    def on_access(self, access, addr, size, value):
+        if (access == UC_MEM_WRITE):
+            if (addr == 0x0d030000):
+                print("[*] SHA command write {:08x}".format(value))
+                if ((value & 0x80000000) != 0):
+                    num_bytes = ((value & 0xfff) + 1) * 0x40
+                    print("[*] SHA started hashing {:08x} bytes at {:08x}".format(\
+                            num_bytes, self.dma_src))
+                    src_data = self.starlet.dma_read(self.dma_src, num_bytes)
+
+                    print("[*] SHA current digest is {}".format(\
+                            hexlify(self.hbuf).decode('utf-8')))
+
+                    h = hashlib.sha1(self.hbuf)
+                    h.update(src_data)
+                    self.hbuf = h.digest()
+
+                    print("[*] SHA new digest is {}".format(\
+                            hexlify(self.hbuf).decode('utf-8')))
+
+                    self.starlet.write32(0x0d030008, 
+                            unpack(">L",self.hbuf[0x00:0x04])[0])
+                    self.starlet.write32(0x0d03000c, 
+                            unpack(">L",self.hbuf[0x04:0x08])[0])
+                    self.starlet.write32(0x0d030010, 
+                            unpack(">L",self.hbuf[0x08:0x0c])[0])
+                    self.starlet.write32(0x0d030014, 
+                            unpack(">L",self.hbuf[0x0c:0x10])[0])
+                    self.starlet.write32(0x0d030018, 
+                            unpack(">L",self.hbuf[0x10:0x14])[0])
+                    self.req_done = True
+
+            elif (addr == 0x0d030004):
+                print("[*] SHA set source address to {:08x}".format(value))
+                self.dma_src = value
+
+            elif (addr == 0x0d030008): self.hbuf[0x00:0x04] = pack(">L", value)
+            elif (addr == 0x0d03000c): self.hbuf[0x04:0x08] = pack(">L", value)
+            elif (addr == 0x0d030010): self.hbuf[0x08:0x0c] = pack(">L", value)
+            elif (addr == 0x0d030014): self.hbuf[0x0c:0x10] = pack(">L", value)
+            elif (addr == 0x0d030018): self.hbuf[0x10:0x14] = pack(">L", value)
 
 # -----------------------------------------------------------------------------
-# NOTE: As I'm writing this, I forsee a problem with using PyCrypto's SHA-1 
 
 from Crypto.Cipher import AES
 
@@ -54,14 +117,64 @@ class AESInterface(object):
         self.key_fifo = bytearray()
         self.key_bd = 0
 
+        self.tmp_iv = bytearray(b'\x00'*0x10)
         self.iv_fifo = bytearray()
         self.iv_bd = 0
 
+        self.req_done = False
+
     def update(self):
-        return
+        if (self.req_done == True):
+            self.req_done = False
+            self.starlet.write32(0x0d020000, 
+                self.starlet.read32(0x0d020000) & 0x7fffffff)
 
     def on_access(self, access, address, size, value):
         if (access == UC_MEM_WRITE):
+
+            if (address == 0x0d020000):
+                print("[*] AES command write {:08x}".format(value))
+
+                # Instantaneously perform a command.
+                # You might want to just enqueue it and run it with update(), 
+                # which is probably a more accurate way of emulating it
+                if ((value & 0x80000000) != 0):
+                    iv_reset = True if ((value & 0x1000) != 0) else None
+                    num_bytes = ((value & 0xfff) + 1) * 0x10
+                    print("[*] AES DMA started, size={:08x}".format(num_bytes))
+
+                    src_data = self.starlet.dma_read(self.dma_src, num_bytes)
+
+                    # If this bit is cleared, we just do DMA without any AES
+                    if ((value & 0x10000000) != 0):
+
+                        if (iv_reset): _iv = self.tmp_iv
+                        else: _iv = self.iv_fifo
+                        cipher = AES.new(self.key_fifo, AES.MODE_CBC, iv=_iv)
+
+                        # Decrypt data when this is set, encrypt when clear
+                        if ((value & 0x08000000) != 0):
+                            wdata = cipher.decrypt(src_data)
+                        else:
+                            wdata = cipher.encrypt(src_data)
+                        self.starlet.dma_write(self.dma_dst, wdata)
+                        print("[*] AES DMA wrote {:08x} to {:08x}".format(\
+                            num_bytes, self.dma_dst))
+                        hexdump_indent(wdata[0:0x100], 1)
+                    else:
+                        self.starlet.dma_write(self.dma_dst, src_data)
+                        print("[*] AES DMA wrote {:08x} to {:08x}".format(\
+                            num_bytes, self.dma_dst))
+                        hexdump_indent(src_data[0:0x100], 1)
+
+                    self.tmp_iv = self.starlet.dma_read(\
+                            self.dma_src + num_bytes - 0x10, 0x10)
+                    self.dma_src += num_bytes
+                    self.dma_dst += num_bytes
+                    self.req_done = True
+
+
+
 
             if (address == 0x0d020004):
                 print("[*] AES set DMA source to {:08x}".format(value))
