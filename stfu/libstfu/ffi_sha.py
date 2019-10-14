@@ -1,6 +1,17 @@
 #!/usr/bin/python3
+""" ffi_sha.py
+
+This is nasty but, for some reason, I couldn't get SHA1 digests to work out 
+correctly in hashlib and I'm too lazy/stupid to figure it out. Perhaps there's 
+some weird endianness thing going on there, or something about Python [not] 
+making copies of data, I'm not sure.
+"""
 
 from ctypes import *
+
+# We kind of assume here that you're always invoking `stfu` from the project
+# root directory; this will probably be the only possible case.
+
 try:
     __mysha = cdll.LoadLibrary("libstfu/mysha.so")
 except OSError as e:
