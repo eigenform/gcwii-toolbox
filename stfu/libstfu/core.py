@@ -25,12 +25,10 @@ class Starlet(object):
         self.code_loaded = False
         self.codelen = None
         self.entrypt = None
-        self.mmio_logging = True
         self.use_boot0 = False
         self.symbols = {}
         self.last_block_size = 0
         self.block_count = 0
-        self.last_mmio_pc = 0
 
         # Capstone disassembler objects
         # FIXME: It's not clear how to deal with ARM/THUMB modes
@@ -94,22 +92,26 @@ class Starlet(object):
         self.mu.mem_map(0xffff0000, 0x00002000) # Boot ROM
 
     def __init_hook(self):
-        """ Initialize a set of default hooks necessary for emulation """
+        """ Initialize a set of default hooks necessary for emulation.
+        Bin all non-device-specific MMIOs into a generic Hollywood device like
+        `self.io.hlwd` or something similar.
+        """
         self.__register_mmio_device("NAND",    0x0d010000, 0x20, self.io.nand)
         self.__register_mmio_device("AES",     0x0d020000, 0x20, self.io.aes)
         self.__register_mmio_device("SHA1",    0x0d030000, 0x20, self.io.sha)
-        self.__register_mmio_device("IPC",     0x0d800000, 0xc)
-        self.__register_mmio_device("TIMER",   0x0d800010, 0x4)
-        self.__register_mmio_device("INTR",    0x0d800030, 0x2c)
-        self.__register_mmio_device("PROT",    0x0d800060, 0x1c)
-        self.__register_mmio_device("PPCGPIO", 0x0d8000c0, 0x18)
-        self.__register_mmio_device("ARMGPIO", 0x0d8000dc, 0x20)
-        self.__register_mmio_device("AHB",     0x0d800100, 0x4c)
-        self.__register_mmio_device("PLAT",    0x0d800180, 0x20)
-        self.__register_mmio_device("CLK",     0x0d8001b0, 0x38)
-        self.__register_mmio_device("EFUSE",   0x0d8001ec, 0x4, self.io.otp)
-        self.__register_mmio_device("MISC",    0x0d8001f4, 0x2c)
-        self.__register_mmio_device("AHB",     0x0d8b4228, 0x2)
+
+        self.__register_mmio_device("IPC",     0x0d800000, 0x0c, self.io.ipc)
+        self.__register_mmio_device("HW",      0x0d800010, 0x1c, self.io.hlwd)
+        self.__register_mmio_device("INTR",    0x0d800030, 0x2c, self.io.intc)
+        self.__register_mmio_device("HW",      0x0d800060, 0x5c, self.io.hlwd)
+        self.__register_mmio_device("PPCGPIO", 0x0d8000c0, 0x18, self.io.gpio)
+        self.__register_mmio_device("ARMGPIO", 0x0d8000dc, 0x20, self.io.gpio)
+        self.__register_mmio_device("AHB",     0x0d800100, 0x4c, self.io.ahb)
+        self.__register_mmio_device("HW",      0x0d800150, 0x98, self.io.hlwd)
+        self.__register_mmio_device("EFUSE",   0x0d8001ec, 0x04, self.io.otp)
+        self.__register_mmio_device("HW",      0x0d8001f4, 0x2c, self.io.hlwd)
+
+        self.__register_mmio_device("AHB",     0x0d8b4228, 0x02, self.io.ahb)
 
         # Error handling hooks
         self.mu.hook_add(UC_HOOK_MEM_UNMAPPED, self.__get_err_unmapped_func())
@@ -125,23 +127,17 @@ class Starlet(object):
             # Deal with things that need to happen instantaneously on accesses
             io_device.on_access(access, addr, size, value)
 
-            # Template logging code shared across all MMIO accesses
-            if (starlet.mmio_logging == False): return True
-            this_pc = uc.reg_read(UC_ARM_REG_PC)
-            accinfo = "write" if access == UC_MEM_WRITE else "read"
-            valinfo = "{:08x}".format(value) if access == UC_MEM_WRITE else ""
-            locinfo = starlet.__get_locinfo(this_pc)
-            if (starlet.last_mmio_pc != this_pc):
-                log("{} {} at {:08x}\t {}", mmio_name, accinfo, addr, locinfo)
-            starlet.last_mmio_pc = this_pc
-
         return mmio_func
 
     def __register_mmio_device(self, name, addr, size, io_device=None):
         """ Register an MMIO handler specific to some I/O device """
+        base = addr
+        tail = base + size
+
+        log("Registering MMIO {:08x}-{:08x} for {}", base, tail, name)
         if (io_device == None): io_device = self.io.dummy
         self.mu.hook_add(UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE,
-            self.__get_mmio_func(name, io_device), begin=addr, end=addr+size)
+            self.__get_mmio_func(name, io_device), begin=base, end=tail)
 
     def __get_basic_block_func(self):
         """ Generate a Unicorn UC_HOOK_BLOCK handler """

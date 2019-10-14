@@ -46,7 +46,7 @@ emu.load_otp("otp.bin")
 # Example: load and start an arbitrary binary at some address
 # You can also load symbols to annotate logging/disassembly
 #emu.load_code(argv[1], 0x0d400000)
-#emu.load_symbols("wow.csv")
+emu.load_symbols("boot1c.csv")
 
 # Start emulation
 emu.run()
