@@ -58,8 +58,7 @@ class Starlet(object):
         """ Load a NAND dump (reading it all into memory at once) """
         with open(filename, "rb") as f:
             self.io.nand.data = f.read()
-        print("[*] Imported NAND from {} ({:08x})".format(filename,
-            len(self.io.nand.data)))
+        log("Imported NAND from {} ({:08x})", filename, len(self.io.nand.data))
 
     def find_symbol(self, addr):
         """ wow this is awful """
@@ -88,22 +87,21 @@ class Starlet(object):
                 addr = int(x[0], 16)
                 name = x[1]
                 self.symbols[addr] = name
-        print("[*] Imported {} symbols from {}".format(len(self.symbols),
-            filename))
+        log("Imported {} symbols from {}", len(self.symbols), filename)
 
     def __get_logrange_func(self):
-        def logrange_hook(uc, address, size, user_data):
+        def logrange_hook(uc, addr, size, user_data):
             starlet = uc.parent
-            print("[*] Logpoint at {}".format(self.__get_locinfo(address)))
+            log("Hit logpoint at {}", self.__get_locinfo(addr))
         return logrange_hook
 
     def __get_breakpoint_func(self):
-        def breakpoint_hook(uc, address, size, user_data):
+        def breakpoint_hook(uc, addr, size, user_data):
             starlet = uc.parent
-            print("[*] Breakpoint at pc={:08x}".format(address))
+            log("[*] Breakpoint at pc={:08x}", addr)
 
             # Disassemble directly at the breakpoint
-            starlet.disas(address, 0x20);
+            starlet.disas(addr, 0x20);
 
             starlet.halt()
         return breakpoint_hook
@@ -122,15 +120,15 @@ class Starlet(object):
 
         # FIXME: this isn't a good strategy
         #if ((addr & 2) == 2):
-        #    print("[*] Disassembling in THUMB mode")
+        #    log("Disassembling in THUMB mode")
         #    instrs = self.dis_thumb.disasm(data, addr, count=size)
         #else:
-        #    print("[*] Disassembling in ARM mode")
+        #    log("Disassembling in ARM mode")
         #    instrs = self.dis_arm.disasm(data, addr, count=size)
 
         instrs = self.dis_thumb.disasm(data, addr, count=size)
 
-        print("[!] Disassembly request at {:08x}".format(addr))
+        log("Disassembly request at {:08x}", addr)
         for instr in instrs:
             ad = instr.address
             ib = hexlify(instr.bytes).decode('utf-8')
@@ -142,18 +140,20 @@ class Starlet(object):
         assert self.code_loaded == True
         if (self.use_boot0):
             self.code_entrypoint = 0xffff0000
+
+        log("Starting execution at {:08x}", self.code_entrypoint)
         try:
             self.mu.emu_start(self.code_entrypoint, 
                     self.code_entrypoint + self.codelen)
             self.running = True
         except UcError as e:
-            print("[!] ERROR: %s".format(e))
+            warn("ERROR: {}", e)
             self.dump_state()
             self.running = False
 
     def halt(self):
         self.mu.emu_stop()
-        print("[!] Halted emulation")
+        warn("Halted emulation")
         self.dump_state()
         self.running = False
 
@@ -183,11 +183,11 @@ class Starlet(object):
 
     def __get_mmio_func(self, mmio_name, io_device):
         """ Generate an MMIO-handler function """
-        def mmio_handler_func(uc, access, address, size, value, user_data):
+        def mmio_handler_func(uc, access, addr, size, value, user_data):
             starlet = uc.parent
 
             # Do some device-specific function
-            io_device.on_access(access, address, size, value)
+            io_device.on_access(access, addr, size, value)
 
             if (starlet.mmio_logging == False):
                 return True
@@ -199,8 +199,7 @@ class Starlet(object):
             locinfo = starlet.__get_locinfo(this_pc)
 
             if (starlet.last_mmio_pc != this_pc):
-                print("[*] {} {} at {:08x}\t {}".format(mmio_name, accinfo,
-                    address, locinfo))
+                log("{} {} at {:08x}\t {}", mmio_name, accinfo, addr, locinfo)
                 
             starlet.last_mmio_pc = this_pc
         return mmio_handler_func
@@ -215,21 +214,20 @@ class Starlet(object):
 
     def __get_err_unmapped_func(self):
         """ Generate a handler for un-mapped memory accesses """
-        def hook_unmapped(uc, access, address, size, value, user_data):
+        def hook_unmapped(uc, access, addr, size, value, user_data):
             pc = uc.reg_read(UC_ARM_REG_PC)
             acc_type = "write" if access == UC_MEM_WRITE_UNMAPPED else "read"
-            print("[!] MMU error: pc={:08x} Unmapped {} {:08x} on {:08x}".format(
-                pc, acc_type, value, address))
+            warn("MMU error: pc={:08x} Unmapped {} {:08x} on {:08x}", pc, 
+                    acc_type, value, addr)
             return False
         return hook_unmapped
 
     def __get_basic_block_func(self):
         """ Generate a basic block hook """
-        def basic_block_hook(uc, address, size, user_data):
+        def basic_block_hook(uc, addr, size, user_data):
             starlet = uc.parent
 
-            print("[*] Basic block at {:08x} ({})".format(address,
-                starlet.find_symbol(address)))
+            log("Basic block at {:08x} ({})", addr,starlet.find_symbol(addr))
 
             # Potential service any outstanding I/O work
             starlet.io.update()
@@ -280,8 +278,7 @@ class Starlet(object):
         with open(filename, "rb") as f:
             OTP_DATA = f.read()
         self.io.otp.data = OTP_DATA
-        print("[*] Loaded {:08x} bytes from {} to OTP".format(len(OTP_DATA),
-            filename))
+        log("Loaded {:08x} bytes from {} to OTP", len(OTP_DATA), filename)
 
     # Memory access primitives
     def read32(self, addr): return unpack(">L", self.mu.mem_read(addr, 4))[0]
@@ -310,7 +307,7 @@ class Starlet(object):
         fmt = """pc={:08x} lr={:08x} sp={:08x}\
             \nr0={:08x} r1={:08x} r2={:08x} r3={:08x} r4={:08x} r5={:08x}\
             \nr6={:08x} r7={:08x} r8={:08x} r9={:08x} """
-        print(fmt.format(pc,lr,sp,r0,r1,r2,r3,r4,r5,r6,r7,r8,r9))
+        log(fmt, pc,lr,sp,r0,r1,r2,r3,r4,r5,r6,r7,r8,r9)
 
 
 # -----------------------------------------------------------------------------
@@ -320,7 +317,7 @@ if (len(argv) < 3):
     exit()
 
 def sig_handle(sig, frame):
-    print("[!] Caught SIGINT, halting ...")
+    warn("Caught SIGINT, halting now!")
     emu.halt()
 
 signal.signal(signal.SIGINT, sig_handle)
