@@ -27,7 +27,7 @@ ffi_sha1_get.argtypes       = [ c_uint ]
 ffi_sha1_get.restype        = c_uint
 
 ffi_sha1_input              = __mysha['ffi_sha1_input']
-ffi_sha1_input.argtypes     = [ POINTER(c_char), c_uint ]
-#ffi_sha1_input.argtypes     = [ c_void_p, c_size_t ]
+#ffi_sha1_input.argtypes     = [ POINTER(c_char), c_uint ]
+ffi_sha1_input.argtypes     = [ c_void_p, c_uint ]
 ffi_sha1_input.restype      = None
 

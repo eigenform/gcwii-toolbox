@@ -52,7 +52,7 @@
 
 
 // I can't believe I'm doing this
-SHA1Context ctx;
+SHA1Context ctx = { { 0 }, 0, 0, { 0 }, 0, 0, 0 };
 void ffi_sha1_set(unsigned idx, unsigned val) { ctx.Message_Digest[idx] = val; }
 unsigned ffi_sha1_get(unsigned idx) { return ctx.Message_Digest[idx]; }
 void ffi_sha1_input(const unsigned char *in, unsigned len) { SHA1Input(&ctx, in, len); }
