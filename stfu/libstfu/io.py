@@ -123,9 +123,9 @@ class SHAInterface(object):
 
 from Crypto.Cipher import AES
 
+AES_FIFO_TIMEOUT = 10
 class AESInterface(object):
     """ Container for the AES engine """
-    FIFO_TIMEOUT = 10000
 
     def __init__(self, parent):
         self.starlet = parent
@@ -135,13 +135,34 @@ class AESInterface(object):
         self.req_done = False
 
         self.tmp_iv = bytearray(b'\x00'*0x10)
-        self.key_fifo = bytearray()
-        self.iv_fifo = bytearray()
-        self.key_bd = 0
-        self.iv_bd = 0
 
+        self.key_fifo = bytearray(b'\x00'*0x10)
+        self.iv_fifo = bytearray(b'\x00'*0x10)
+
+        self.key_fifo_open = False
+        self.iv_fifo_open = False
+
+        self.key_fifo_timer = 0
+        self.iv_fifo_timer = 0
+        self.key_fifo_idx = 0
+        self.iv_fifo_idx = 0
 
     def update(self):
+        # Handle the key FIFO window
+        if (self.key_fifo_open == True):
+            ktimer_diff = self.starlet.block_count - self.key_fifo_timer
+            if (ktimer_diff >= AES_FIFO_TIMEOUT):
+                self.key_fifo_open = False
+                self.key_fifo_timer = 0
+
+        # Handle the IV FIFO window
+        if (self.iv_fifo_open == True):
+            itimer_diff = self.starlet.block_count - self.iv_fifo_timer
+            if (itimer_diff >= AES_FIFO_TIMEOUT):
+                self.iv_fifo_open = False
+                self.iv_fifo_timer = 0
+
+        # Update MMIO register state
         if (self.req_done == True):
             self.req_done = False
             self.starlet.write32(AES_CTRL,
@@ -156,21 +177,30 @@ class AESInterface(object):
                 if ((value & 0x80000000) != 0):
                     self.handle_command(value)
                     self.req_done = True
-            if (addr == AES_SRC):
+            elif (addr == AES_SRC):
                 log("AES set DMA source to {:08x}", value)
                 self.dma_src = value
-            if (addr == AES_DST):
+            elif (addr == AES_DST):
                 log("AES set DMA dest to {:08x}", value)
                 self.dma_dst = value
-            if (addr == AES_KEY):
-                if ((self.starlet.io.timer - self.key_bd) > self.FIFO_TIMEOUT):
-                    self.key_fifo = bytearray()
-                self.key_fifo_update(value)
-            if (addr == AES_IV):
-                if ((self.starlet.io.timer - self.iv_bd) > self.FIFO_TIMEOUT):
-                    self.iv_fifo = bytearray()
-                self.iv_fifo_update(value)
+            elif (addr == AES_KEY):
+                if (self.key_fifo_open == False):
+                    self.key_fifo_open = True
+                    self.key_fifo_idx = 0
+                    self.key_fifo_timer = self.starlet.block_count
+                    self.key_fifo_update(value)
+                else:
+                    self.key_fifo_update(value)
+            elif (addr == AES_IV):
+                if (self.iv_fifo_open == False):
+                    self.iv_fifo_open = True
+                    self.iv_fifo_idx = 0
+                    self.iv_fifo_timer = self.starlet.block_count
+                    self.iv_fifo_update(value)
+                else:
+                    self.iv_fifo_update(value)
 
+            
     def handle_command(self, val):
         num_bytes = ((val & 0xfff) + 1) * 0x10
 
@@ -195,7 +225,9 @@ class AESInterface(object):
             self.dma_write(self.dma_dst, src_data)
 
         # Update the chain IV and new AES_{SRC,DST} values
-        self.tmp_iv = src_data[num_bytes - 0x10:]
+        cur = num_bytes - 0x10
+        del self.tmp_iv
+        self.tmp_iv = src_data[cur:cur+0x10]
         self.dma_src += num_bytes
         self.dma_dst += num_bytes
 
@@ -211,14 +243,26 @@ class AESInterface(object):
         self.starlet.dma_write(addr, data)
 
     def key_fifo_update(self, val):
-        self.key_fifo += pack(">L", val)
+        entry = pack(">L", val)
+
+        cur = self.key_fifo_idx * 4
+        self.key_fifo[cur:cur+4] = entry
+        self.key_fifo_idx += 1
+
         fifo_bytes = hexlify(self.key_fifo).decode('utf-8')
         log("AES got {:08x} from key FIFO (key={})", val, fifo_bytes)
+        log("AES block_count={}", self.starlet.block_count)
 
     def iv_fifo_update(self, val):
-        self.iv_fifo += pack(">L", val)
+        entry = pack(">L", val)
+
+        cur = self.iv_fifo_idx * 4
+        self.iv_fifo[cur:cur+4] = entry
+        self.iv_fifo_idx += 1
+
         fifo_bytes = hexlify(self.iv_fifo).decode('utf-8')
         log("AES got {:08x} from iv FIFO (key={})", val, fifo_bytes)
+        log("AES block_count={}", self.starlet.block_count)
 
 
 

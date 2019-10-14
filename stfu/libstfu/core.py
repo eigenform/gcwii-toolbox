@@ -148,14 +148,24 @@ class Starlet(object):
         def basic_block_hook(uc, addr, size, user_data):
             starlet = uc.parent
 
-            if (self.symbols):
-                log("Basic block at {:08x} ({})", addr,
-                        starlet.find_symbol(addr))
-            else:
-                log("Basic block at {:08x}", addr)
+            #if (self.symbols):
+            #    log("Basic block at {:08x} ({})", addr,
+            #            starlet.find_symbol(addr))
+            #else:
+            #    log("Basic block at {:08x}", addr)
 
-            # Potentially service any outstanding I/O work
-            starlet.io.update()
+            # FIXME: The period for I/O updates seems to heavily affect the
+            # speed of emulation, especially in cases where things are on-CPU
+            # which don't use any I/O at all. Tune this and find a good value.
+            # You basically trade off "speed of various I/O devices" for speed
+            # of everything else happening on-CPU.
+            #
+            # The utility of tuning this also probably depends on how long the
+            # emulation is/has been/will be running for.
+
+            # Potentially service any outstanding I/O work.
+            if ((starlet.block_count % 0x100) == 0):
+                starlet.io.update()
 
             starlet.last_block_size = size
             starlet.block_count += 1
