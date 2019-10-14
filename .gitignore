@@ -37,9 +37,11 @@
 !stfu/
 !stfu/stfu
 !stfu/libstfu
+!stfu/libstfu/core.py
 !stfu/libstfu/io.py
 !stfu/libstfu/util.py
-!stfu/libstfu/Makefile
+!stfu/libstfu/hollywood_defs.py
 !stfu/libstfu/ffi_sha.py
+!stfu/libstfu/Makefile
 !stfu/libstfu/sha1.c
 !stfu/libstfu/sha1.h
