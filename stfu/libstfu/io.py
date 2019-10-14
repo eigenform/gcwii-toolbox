@@ -63,12 +63,12 @@ class SHAInterface(object):
             self.starlet.write32(SHA_H3, ffi_sha1_get(3))
             self.starlet.write32(SHA_H4, ffi_sha1_get(4))
 
-            log("SHA new state: {:08x}{:08x}{:08x}{:08x}{:08x}", 
-                    ffi_sha1_get(0), ffi_sha1_get(1), ffi_sha1_get(2), 
+            log("SHA new state: {:08x}{:08x}{:08x}{:08x}{:08x}",
+                    ffi_sha1_get(0), ffi_sha1_get(1), ffi_sha1_get(2),
                     ffi_sha1_get(3), ffi_sha1_get(4))
 
             # Indicate that we've completed the request
-            self.starlet.write32(SHA_CTRL, 
+            self.starlet.write32(SHA_CTRL,
                 self.starlet.read32(SHA_CTRL) & 0x7fffffff)
 
             # Update the state of the source buffer
@@ -87,19 +87,19 @@ class SHAInterface(object):
             elif (addr == SHA_SRC):
                 log("SHA set source addr to {:08x}", value)
                 self.dma_src = value
-            elif (addr == SHA_H0): 
+            elif (addr == SHA_H0):
                 log("SHA write {:08x} to h[0]", value)
                 ffi_sha1_set(0, value)
-            elif (addr == SHA_H1): 
+            elif (addr == SHA_H1):
                 log("SHA write {:08x} to h[1]", value)
                 ffi_sha1_set(1, value)
-            elif (addr == SHA_H2): 
+            elif (addr == SHA_H2):
                 log("SHA write {:08x} to h[2]", value)
                 ffi_sha1_set(2, value)
-            elif (addr == SHA_H3): 
+            elif (addr == SHA_H3):
                 log("SHA write {:08x} to h[3]", value)
                 ffi_sha1_set(3, value)
-            elif (addr == SHA_H4): 
+            elif (addr == SHA_H4):
                 log("SHA write {:08x} to h[4]", value)
                 ffi_sha1_set(4, value)
 
@@ -115,7 +115,7 @@ class SHAInterface(object):
         hexdump_idt(src_data, 1)
 
         buf = ctypes.c_ubyte * num_bytes
-        ptr = buf.from_buffer_copy(src_data)
+        ptr = buf.from_buffer(src_data)
         ffi_sha1_input(ptr, num_bytes)
         self.dma_src += num_bytes
 
@@ -144,7 +144,7 @@ class AESInterface(object):
     def update(self):
         if (self.req_done == True):
             self.req_done = False
-            self.starlet.write32(AES_CTRL, 
+            self.starlet.write32(AES_CTRL,
                 self.starlet.read32(AES_CTRL) & 0x7fffffff)
             self.starlet.write32(AES_SRC, self.dma_src)
             self.starlet.write32(AES_DST, self.dma_dst)
@@ -174,7 +174,7 @@ class AESInterface(object):
     def handle_command(self, val):
         num_bytes = ((val & 0xfff) + 1) * 0x10
 
-        log("AES DMA started, src={:08x} dst={:08x} size={:08x}", 
+        log("AES DMA started, src={:08x} dst={:08x} size={:08x}",
                 self.dma_src, self.dma_dst, num_bytes)
         log("AES using key={}", hexlify(self.key_fifo).decode('utf-8'))
 
@@ -186,9 +186,9 @@ class AESInterface(object):
             _iv = self.tmp_iv if ((val & 0x1000) != 0) else self.iv_fifo
             cipher = AES.new(self.key_fifo, AES.MODE_CBC, iv=_iv)
             log("AES using  iv={}", hexlify(_iv).decode('utf-8'))
-            if ((val & 0x08000000) != 0): 
+            if ((val & 0x08000000) != 0):
                 wdata = cipher.decrypt(src_data)
-            else: 
+            else:
                 wdata = cipher.encrypt(src_data)
             self.dma_write(self.dma_dst, wdata)
         else:
@@ -242,12 +242,12 @@ class AHBInterface(object):
         if (self.spare0_flags != spare0):
             self.spare0_flags = spare0
             boot0 = self.starlet.read32(HW_BOOT0)
-            if ((spare0 & 0x10000) != 0x10000): 
+            if ((spare0 & 0x10000) != 0x10000):
                 boot0 |= 9
             else:
                 boot0 &= 0xffffffff6
             self.starlet.write32(HW_BOOT0, boot0)
-            log("PLAT: Spare 0 write {:08x}, set boot0 to {:08x}", spare0, 
+            log("PLAT: Spare 0 write {:08x}, set boot0 to {:08x}", spare0,
                     boot0)
 
 # -----------------------------------------------------------------------------
@@ -268,7 +268,7 @@ class OTPInterface(object):
                     otp_word = up32(self.data[addr*4:(addr*4)+4])
                     self.starlet.write32(EFUSE_DATA, otp_word)
 
-                    log("OTP: Command for addr={:02x}, read {:08x}", addr, 
+                    log("OTP: Command for addr={:02x}, read {:08x}", addr,
                             otp_word)
 
                     # ?
@@ -323,7 +323,7 @@ class NANDInterface(object):
             self.req_done = False
         return
 
-    def on_access(self, access, addr, size, value): 
+    def on_access(self, access, addr, size, value):
         if (access == UC_MEM_WRITE):
             if (addr == NAND_CTRL):
                 if ((value & 0x80000000) != 0):
@@ -332,15 +332,15 @@ class NANDInterface(object):
             elif (addr == NAND_CFG):
                 self.config = value
                 log("NAND config={:08x}", self.config)
-            elif (addr == NAND_ADDR0): 
+            elif (addr == NAND_ADDR0):
                 self.addr0 = value
                 log("NAND addr0={:08x}", self.addr0)
-            elif (addr == NAND_ADDR1): 
+            elif (addr == NAND_ADDR1):
                 self.addr1 = value
                 log("NAND addr1={:08x}", self.addr1)
-            elif (addr == NAND_DATABUF): 
+            elif (addr == NAND_DATABUF):
                 self.dma_data_addr = value
-            elif (addr == NAND_ECCBUF): 
+            elif (addr == NAND_ECCBUF):
                 self.dma_ecc_addr = value
 
     def handle_command(self, ctrl):
@@ -354,7 +354,7 @@ class NANDInterface(object):
             warn("NAND write flags unimplemented?")
             self.starlet.halt()
 
-        log("NAND mask={:02x} cmd={:02x} flags={:02x} size={:04x}", mask, 
+        log("NAND mask={:02x} cmd={:02x} flags={:02x} size={:04x}", mask,
                 cmd, flags, datasize)
 
         # Just halt emulation if we come across an unimplemented command

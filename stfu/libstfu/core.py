@@ -11,6 +11,7 @@ from libstfu.hollywood_defs import *
 from libstfu.util import *
 
 from struct import pack, unpack
+import ctypes
 
 class Starlet(object):
     """ Object wrapping a Starlet emulator, implemented with Unicorn.
@@ -58,22 +59,39 @@ class Starlet(object):
 
 
     """ -----------------------------------------------------------------------
-    Top-level functions for initializing/destroying emulator state. 
+    Top-level functions for initializing/destroying emulator state.
     These are called when constructing a new Starlet() object.
     """
 
     def __init_mmu(self):
-        """ Create all relevant memory mappings """
-        self.mu.mem_map(0xffff0000, 0x00002000) # Boot ROM SRAM
-        self.mu.mem_map(0x0d400000, 0x00020000) # SRAM
-        self.mu.mem_map(0x00000000, 0x01800000) # MEM1
-        self.mu.mem_map(0x10000000, 0x04000000) # MEM2
-        self.mu.mem_map(0x0d800000, 0x00000400) # Hollywood registers
-        self.mu.mem_map(0x0d806000, 0x00000400) # EXI registers
-        self.mu.mem_map(0x0d8b0000, 0x00008000) # Memory controller interface?
+        """ Create all relevant memory mappings.
+        In order to implement SRAM mirrors, we need to actually allocate some
+        bytearray() to serve as the backing and pass a pointer to Unicorn.
+        """
+
+        self.__sram_buf = bytearray(b'\x00' * 0x20000)
+        self.__sram_type = ctypes.c_ubyte * 0x20000
+        self.__sram_p = self.__sram_type.from_buffer(self.__sram_buf)
+
+        # Initial SRAM mappings
+        self.mu.mem_map_ptr(0xfffe0000, 0x00010000, UC_PROT_ALL, self.__sram_p)
+        self.mu.mem_map_ptr(0xfff00000, 0x00020000, UC_PROT_ALL, self.__sram_p)
+        self.mu.mem_map_ptr(0x0d400000, 0x00020000, UC_PROT_ALL, self.__sram_p)
+
+        # Hollywood I/O register spaces
         self.mu.mem_map(0x0d010000, 0x00001000) # NAND interface
         self.mu.mem_map(0x0d020000, 0x00001000) # AES interface
         self.mu.mem_map(0x0d030000, 0x00001000) # SHA interface
+        self.mu.mem_map(0x0d800000, 0x00000400) # Hollywood registers
+        self.mu.mem_map(0x0d806000, 0x00000400) # EXI registers
+        self.mu.mem_map(0x0d8b0000, 0x00008000) # Memory controller interface?
+
+        # Two banks of actual RAM
+        self.mu.mem_map(0x00000000, 0x01800000) # MEM1
+        self.mu.mem_map(0x10000000, 0x04000000) # MEM2
+
+        # Mask ROM
+        self.mu.mem_map(0xffff0000, 0x00002000) # Boot ROM
 
     def __init_hook(self):
         """ Initialize a set of default hooks necessary for emulation """
@@ -91,7 +109,7 @@ class Starlet(object):
         self.__register_mmio_device("CLK",     0x0d8001b0, 0x38)
         self.__register_mmio_device("EFUSE",   0x0d8001ec, 0x4, self.io.otp)
         self.__register_mmio_device("MISC",    0x0d8001f4, 0x2c)
-        self.__register_mmio_device("FLUSH",   0x0d8b4228, 0x2)
+        self.__register_mmio_device("AHB",     0x0d8b4228, 0x2)
 
         # Error handling hooks
         self.mu.hook_add(UC_HOOK_MEM_UNMAPPED, self.__get_err_unmapped_func())
@@ -122,7 +140,7 @@ class Starlet(object):
     def __register_mmio_device(self, name, addr, size, io_device=None):
         """ Register an MMIO handler specific to some I/O device """
         if (io_device == None): io_device = self.io.dummy
-        self.mu.hook_add(UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, 
+        self.mu.hook_add(UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE,
             self.__get_mmio_func(name, io_device), begin=addr, end=addr+size)
 
     def __get_basic_block_func(self):
@@ -145,7 +163,7 @@ class Starlet(object):
 
 
     """ -----------------------------------------------------------------------
-    Functions for directly mutating the machine state, writing into memory, 
+    Functions for directly mutating the machine state, writing into memory,
     controlling the flow of execution, etc.
     """
 
@@ -179,7 +197,7 @@ class Starlet(object):
 
     def add_breakpoint(self, addr):
         """ Add a breakpoint hook at some address """
-        self.mu.hook_add(UC_HOOK_CODE, self.__get_breakpoint_func(), 
+        self.mu.hook_add(UC_HOOK_CODE, self.__get_breakpoint_func(),
                 begin=addr, end=addr)
 
     def add_logrange(self, addr, size):
@@ -205,9 +223,9 @@ class Starlet(object):
         with open(filename, "rb") as f: data = f.read()
         self.mu.mem_write(0xffff0000, data)
         self.use_boot0 = True
-    
+
     def load_nand(self, filename):
-        """ Attach a NAND dump to the NANDInterface. This reads the entire 
+        """ Attach a NAND dump to the NANDInterface. This reads the entire
         NAND dump into memory at once """
         with open(filename, "rb") as f: self.io.nand.data = f.read()
         log("Imported NAND from {} ({:08x})", filename, len(self.io.nand.data))
@@ -311,7 +329,7 @@ class Starlet(object):
         def hook_unmapped(uc, access, addr, size, value, user_data):
             pc = uc.reg_read(UC_ARM_REG_PC)
             acc_type = "write" if access == UC_MEM_WRITE_UNMAPPED else "read"
-            warn("MMU error: pc={:08x} Unmapped {} {:08x} on {:08x}", pc, 
+            warn("MMU error: pc={:08x} Unmapped {} {:08x} on {:08x}", pc,
                     acc_type, value, addr)
             return False
         return hook_unmapped
