@@ -41,12 +41,16 @@ emu.load_otp("otp.bin")
 #emu.write16(0x0d403d94, 0x4770) # skyeye boot1 sleep() patch
 
 # Example: add breakpoints/logging to certain code regions
-#emu.add_logrange(0x0d400260, 0x0d400346 - 0x0d400260)
+#emu.add_code_logrange(0x0d400000, 0x0d402000)
+#emu.add_code_logrange(0x00000000, 0x00030000)
+
+#emu.add_mem_logrange(0x0d410000, 0x0d420000)
+#emu.add_breakpoint(0xfff00000)
 
 # Example: load and start an arbitrary binary at some address
 # You can also load symbols to annotate logging/disassembly
 #emu.load_code(argv[1], 0x0d400000)
-emu.load_symbols("boot1c.csv")
+#emu.load_symbols("boot1c.csv")
 
 # Start emulation
 emu.run()

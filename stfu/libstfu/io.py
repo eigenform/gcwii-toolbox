@@ -1,4 +1,7 @@
 #!/usr/bin/python3
+""" libstfu/io.py
+Built on the backs of giants (thanks team twiizers) :^)
+"""
 
 from unicorn.arm_const import *
 from unicorn.unicorn_const import *
@@ -57,13 +60,23 @@ class HollywoodInterface(object):
     """ Bin for unsorted/unknown/miscellaneous Hollywood registers """
     def __init__(self, parent): 
         self.starlet = parent
+        self.sram_mirror = False    # This object's view of the mirror state
+        self.brom_mapped = True     # This object's view of the BROM state
 
-    def update(self):
-        return
-
+    def update(self): return
     def on_access(self, access, addr, size, value): 
         if (access == UC_MEM_WRITE):
             if (addr == HW_SPARE0): self.starlet.io.ahb.spare0_flags = value
+            if (addr == HW_MEMIRR):
+                log("SRNPROT set to {:08x}", value)
+
+                # If the SRAM mirror changes, schedule an event to change it
+                self.sram_mirror = True if ((value & 0x20) != 0) else False
+                if (self.sram_mirror != self.starlet.sram_mirror):
+                    self.starlet.schedule_mirror(self.sram_mirror)
+
+            if (addr == HW_BOOT0):
+                log("HW_BOOT0 set to {:08x}", value)
 
 
 # -----------------------------------------------------------------------------

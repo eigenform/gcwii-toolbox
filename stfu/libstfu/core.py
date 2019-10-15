@@ -13,6 +13,22 @@ from libstfu.util import *
 from struct import pack, unpack
 import ctypes
 
+
+# These are the memory regions backing SRAM and BROM.
+# In order to implement mirroring we need to pass pointers to mem_map_ptr().
+# FIXME: make this less shitty
+
+_srama_buf = bytearray(b'\x00' * 0x10000)
+_srama_type = ctypes.c_ubyte * 0x10000
+_sramb_buf = bytearray(b'\x00' * 0x10000)
+_sramb_type = ctypes.c_ubyte * 0x10000
+_brom_buf = bytearray(b'\x00' * 0x20000)
+_brom_type = ctypes.c_ubyte * 0x20000
+_sram_a = _srama_type.from_buffer(_srama_buf)
+_sram_b = _sramb_type.from_buffer(_sramb_buf)
+_brom = _brom_type.from_buffer(_brom_buf)
+
+
 class Starlet(object):
     """ Object wrapping a Starlet emulator, implemented with Unicorn.
     We do not expect this to be exceptionally performant. However, for some
@@ -21,39 +37,37 @@ class Starlet(object):
     """
 
     def __init__(self):
-        self.running = False
-        self.code_loaded = False
-        self.codelen = None
-        self.entrypt = None
-        self.use_boot0 = False
-        self.symbols = {}
-        self.last_block_size = 0
-        self.block_count = 0
 
-        # Capstone disassembler objects
-        # FIXME: It's not clear how to deal with ARM/THUMB modes
+        self.running = False        # Is emulation running?
+        self.entrypt = None         # Entrypoint used to start emulation
+        self.use_boot0 = False      # Should we do a full boot?
+        self.code_loaded = False    # Has user code been loaded?
+        self.codelen = None         # Length of user code
 
+        # These are used to co-ordinate the SRAM mirror toggle 
+        self.schedule_mirror_done = False
+        self.schedule_mirror_hook = None
+        self.sram_mirror = False
+
+        # For co-ordinating the BROM map toggle
+        self.brom_mapped_done = False
+        self.brom_mapped_hook = False
+        self.brom_mapped = True
+
+        self.symbols = {}           # Dictionary of symbols
+        self.last_block_size = 0    # Size of the previous basic block
+        self.block_count = 0        # The number of basic blocks executed
+
+        # Capstone/Unicorn objects
+        # FIXME: It's not clear how to disassemble ARM/THUMB?
         self.dis_arm = Cs(CS_ARCH_ARM, CS_MODE_ARM | CS_MODE_BIG_ENDIAN)
         self.dis_thumb = Cs(CS_ARCH_ARM, CS_MODE_THUMB | CS_MODE_BIG_ENDIAN)
-
-        # We explicitly create a Uc.parent reference to this object here
-        # in order to integrate Unicorn's hooks into this whole abstraction
-
         self.mu = Uc(UC_ARCH_ARM, UC_MODE_ARM | UC_MODE_BIG_ENDIAN)
-        self.mu.parent = self
 
-        # This StarletIO() container manages the state of all I/O devices
-
-        self.io = StarletIO(self)
-
-        # Configure memory mappings in Unicorn
-
-        self.__init_mmu()
-
-        # These hooks implement MMIO and are used to mutate the state of
-        # all I/O devices wrapped inside StarletIO()
-
-        self.__init_hook()
+        self.mu.parent = self       # Unicorn ref to this object
+        self.io = StarletIO(self)   # I/O device container
+        self.__init_mmu()           # Configure memory mappings in Unicorn
+        self.__init_hook()          # Initialize required hooks
 
 
     """ -----------------------------------------------------------------------
@@ -63,18 +77,31 @@ class Starlet(object):
 
     def __init_mmu(self):
         """ Create all relevant memory mappings.
-        In order to implement SRAM mirrors, we need to actually allocate some
+        In order to implement mirrors, we need to actually allocate some
         bytearray() to serve as the backing and pass a pointer to Unicorn.
+
+        Protip: Do not attempt to alter the SRAM/BROM mappings inside of
+        a UC_MEM_{READ,WRITE} hook. It would be conceptually the easiest 
+        approach, however, the current nasty code is a hack around the fact
+        that we apparently can't accomplish that without horrific death inside
+        of libunicorn.so (no idea what that's about, but I'd rather hack
+        right around it instead of deal with it).
+
+        FIXME: There is some weird thing happening with mappings on ffff0000.
+        When I set them to len=0x10000, we hang in libunicorn.so on unmapping.
+        Apparently things work with len=0xf800. WHY?
         """
 
-        self.__sram_buf = bytearray(b'\x00' * 0x20000)
-        self.__sram_type = ctypes.c_ubyte * 0x20000
-        self.__sram_p = self.__sram_type.from_buffer(self.__sram_buf)
+        # FIXME: investigate this a bit more
+        # Initial SRAM/BROM mappings
+        self.mu.mem_map_ptr(0xffff0000, 0x0000f800, UC_PROT_ALL, _brom)
+        self.mu.mem_map_ptr(0xfffe0000, 0x00010000, UC_PROT_ALL, _sram_a)
 
-        # Initial SRAM mappings
-        self.mu.mem_map_ptr(0xfffe0000, 0x00010000, UC_PROT_ALL, self.__sram_p)
-        self.mu.mem_map_ptr(0xfff00000, 0x00020000, UC_PROT_ALL, self.__sram_p)
-        self.mu.mem_map_ptr(0x0d400000, 0x00020000, UC_PROT_ALL, self.__sram_p)
+        self.mu.mem_map_ptr(0xfff00000, 0x00010000, UC_PROT_ALL, _sram_a)
+        self.mu.mem_map_ptr(0x0d400000, 0x00010000, UC_PROT_ALL, _sram_a)
+
+        self.mu.mem_map_ptr(0x0d410000, 0x00010000, UC_PROT_ALL, _sram_b)
+        self.mu.mem_map_ptr(0xfff10000, 0x00010000, UC_PROT_ALL, _sram_b)
 
         # Hollywood I/O register spaces
         self.mu.mem_map(0x0d010000, 0x00001000) # NAND interface
@@ -88,8 +115,57 @@ class Starlet(object):
         self.mu.mem_map(0x00000000, 0x01800000) # MEM1
         self.mu.mem_map(0x10000000, 0x04000000) # MEM2
 
-        # Mask ROM
-        self.mu.mem_map(0xffff0000, 0x00002000) # Boot ROM
+    def schedule_mirror(self, en):
+        """ goddamn it 
+        Swap the state of the SRAM mirrors. This is a giant pain in the ass.
+        *HOPEFULLY* a UC_HOOK_BLOCK will actually be called fast enough for
+        the target code to be convinced that the mappings have changed.
+        """
+
+        # This is the value that the mirror will transition to (False/True)
+        self.sram_mirror_next = en
+
+        def breakpoint_hook(uc, addr, size, user_data):
+            starlet = uc.parent
+            if (starlet.brom_mapped == True):
+                if (starlet.sram_mirror_next == True):
+                    starlet.sram_mirror = True
+                    log("Swapping sram mirror to True pc={:08x}", 
+                            starlet.sram_mirror_next, addr)
+
+                    log("old regions")
+                    for r in uc.mem_regions(): 
+                        log("{:08x} {:08x} {:08x}", r[0],r[1],r[2])
+
+                    uc.mem_unmap(0xffff0000, 0x0000f800) # brom
+                    uc.mem_unmap(0xfffe0000, 0x00010000) # sram_a
+                    uc.mem_unmap(0xfff00000, 0x00010000) # sram_a
+                    uc.mem_unmap(0x0d400000, 0x00010000) # sram_a
+                    uc.mem_unmap(0xfff10000, 0x00010000) # sram_b
+                    uc.mem_unmap(0x0d410000, 0x00010000) # sram_b
+
+                    uc.mem_map_ptr(0xfff00000,0x00020000,UC_PROT_ALL, _brom)
+                    uc.mem_map_ptr(0x0d400000,0x00020000,UC_PROT_ALL, _brom)
+                    uc.mem_map_ptr(0xffff0000,0x0000f800,UC_PROT_ALL, _sram_a)
+                    uc.mem_map_ptr(0xfffe0000,0x00010000,UC_PROT_ALL, _brom)
+
+                    log("new regions")
+                    for r in uc.mem_regions(): 
+                        log("{:08x} {:08x} {:08x}", r[0],r[1],r[2])
+
+                    # Tell the starlet container we're done swapping
+                    starlet.schedule_mirror_done = True
+
+        # Add this hook, saving the index for later so we can remove it
+        self.schedule_mirror_hook = self.mu.hook_add(UC_HOOK_BLOCK, 
+                breakpoint_hook)
+
+
+    def set_brom_mapped(self, enable):
+        """ Toggle the BROM mirror """
+        #if (enable == True):
+        return
+
 
     def __init_hook(self):
         """ Initialize a set of default hooks necessary for emulation.
@@ -123,10 +199,7 @@ class Starlet(object):
         """ Generate an MMIO-handler specific to the provided I/O device """
         def mmio_func(uc, access, addr, size, value, user_data):
             starlet = uc.parent
-
-            # Deal with things that need to happen instantaneously on accesses
             io_device.on_access(access, addr, size, value)
-
         return mmio_func
 
     def __register_mmio_device(self, name, addr, size, io_device=None):
@@ -163,6 +236,12 @@ class Starlet(object):
             if ((starlet.block_count % 0x100) == 0):
                 starlet.io.update()
 
+            # Kill the SRAM mirror callback after it's completed.
+            # FIXME: I couldn't think of a better place to put this.
+            if (starlet.schedule_mirror_done == True):
+                starlet.schedule_mirror_done = False
+                uc.hook_del(starlet.schedule_mirror_hook)
+
             starlet.last_block_size = size
             starlet.block_count += 1
         return basic_block_hook
@@ -184,7 +263,7 @@ class Starlet(object):
                 warn("Try loading a binary, or attaching NAND and boot ROM")
                 return None
             else:
-                until = halt if (halt != None) else self.entrypt+self.codelen
+                until = halt if (halt != None) else 0xffffffff
         log("Starting execution at {:08x}", self.entrypt)
         try:
             self.mu.emu_start(self.entrypt, until)
@@ -206,10 +285,16 @@ class Starlet(object):
         self.mu.hook_add(UC_HOOK_CODE, self.__get_breakpoint_func(),
                 begin=addr, end=addr)
 
-    def add_logrange(self, addr, size):
+    def add_code_logrange(self, addr_base, addr_tail):
         """ Add a hook for logging on some range of code """
-        self.mu.hook_add(UC_HOOK_CODE, self.__get_logrange_func(),
-                begin=addr, end=(addr+size))
+        self.mu.hook_add(UC_HOOK_CODE, self.__get_code_logrange_func(),
+                begin=addr_base, end=addr_tail)
+
+    def add_mem_logrange(self, addr_base, addr_tail):
+        """ Add a hook for logging on some range of code """
+        self.mu.hook_add(UC_HOOK_MEM_READ|UC_HOOK_MEM_WRITE, 
+            self.__get_mem_logrange_func(), begin=addr_base, end=addr_tail)
+
 
     def read32(self, addr): return up32(self.mu.mem_read(addr, 4))
     def read16(self, addr): return up16(self.mu.mem_read(addr, 2))
@@ -217,7 +302,6 @@ class Starlet(object):
     def write16(self, addr, val): self.mu.mem_write(addr, pack(">H", val))
     def dma_write(self, addr, data): self.mu.mem_write(addr, bytes(data))
     def dma_read(self, addr, size): return self.mu.mem_read(addr, size)
-
 
     """ -----------------------------------------------------------------------
     Functions for attaching devices and/or importing some other kinds
@@ -311,12 +395,23 @@ class Starlet(object):
             op = instr.op_str
             print("\t{:08x}: \t{}\t{}\t{}".format(ad, ib, mn, op))
 
-    def __get_logrange_func(self):
+    def __get_code_logrange_func(self):
         """ Generate a hook for logging on some range of code """
         def logrange_hook(uc, addr, size, user_data):
             starlet = uc.parent
-            log("Hit logpoint at {}", self.__get_locinfo(addr))
+            log("TRACE: {}", self.__get_locinfo(addr))
         return logrange_hook
+
+    def __get_mem_logrange_func(self):
+        """ Generate an MMIO-handler specific to the provided I/O device """
+        def mem_logrange(uc, access, addr, size, value, user_data):
+            starlet = uc.parent
+            pc = starlet.mu.reg_read(UC_ARM_REG_PC)
+            acc = "write" if access == UC_MEM_WRITE else "read"
+            log("TRACE: {} {} memaddr={:08x},val={:08x}",
+                    acc, self.__get_locinfo(pc), addr, value)
+        return mem_logrange
+
 
     def __get_breakpoint_func(self):
         """ Generate a breakpoint-like hook which halts emulation """
