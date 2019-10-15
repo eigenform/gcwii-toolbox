@@ -28,6 +28,10 @@ class StarletIO(object):
         self.ipc = IPCInterface(parent)
         self.hlwd = HollywoodInterface(parent)
         self.intc = InterruptInterface(parent)
+        self.ehci = EHCInterface(parent)
+
+        self.ohci0 = OHCInterface(parent)
+        self.ohci1 = OHCInterface(parent)
 
     def update(self):
         """ Update various aspects of I/O or chipset state """
@@ -46,6 +50,27 @@ class DummyInterface(object):
         self.starlet = parent
     def on_access(self, access, addr, size, value): 
         return
+
+# -----------------------------------------------------------------------------
+class OHCInterface(object):
+    """ EHCI container """
+    def __init__(self, parent): 
+        self.starlet = parent
+
+    def on_access(self, access, addr, size, value): 
+        return
+
+
+
+# -----------------------------------------------------------------------------
+class EHCInterface(object):
+    """ EHCI container """
+    def __init__(self, parent): 
+        self.starlet = parent
+
+    def on_access(self, access, addr, size, value): 
+        return
+
 
 # -----------------------------------------------------------------------------
 class InterruptInterface(object):
@@ -78,6 +103,9 @@ class HollywoodInterface(object):
             if (addr == HW_BOOT0):
                 log("HW_BOOT0 set to {:08x}", value)
 
+                self.brom_mapped = False if ((value & 0x1000) != 0) else True
+                if (self.brom_mapped != self.starlet.brom_mapped):
+                    self.starlet.schedule_brom_map(self.brom_mapped)
 
 # -----------------------------------------------------------------------------
 class IPCInterface(object):

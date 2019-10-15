@@ -1,4 +1,7 @@
 #!/usr/bin/python3
+""" libstfu/core.py
+Everything about this is a mistake
+"""
 
 from __future__ import print_function
 from unicorn import *
@@ -50,8 +53,8 @@ class Starlet(object):
         self.sram_mirror = False
 
         # For co-ordinating the BROM map toggle
-        self.brom_mapped_done = False
-        self.brom_mapped_hook = False
+        self.schedule_brom_map_done = False
+        self.schedule_brom_map_hook = False
         self.brom_mapped = True
 
         self.symbols = {}           # Dictionary of symbols
@@ -107,6 +110,10 @@ class Starlet(object):
         self.mu.mem_map(0x0d010000, 0x00001000) # NAND interface
         self.mu.mem_map(0x0d020000, 0x00001000) # AES interface
         self.mu.mem_map(0x0d030000, 0x00001000) # SHA interface
+        self.mu.mem_map(0x0d040000, 0x00000400) # ECHI
+        self.mu.mem_map(0x0d050000, 0x00000400) # OHCI0
+        self.mu.mem_map(0x0d060000, 0x00000400) # OHCI1
+
         self.mu.mem_map(0x0d800000, 0x00000400) # Hollywood registers
         self.mu.mem_map(0x0d806000, 0x00000400) # EXI registers
         self.mu.mem_map(0x0d8b0000, 0x00008000) # Memory controller interface?
@@ -120,11 +127,10 @@ class Starlet(object):
         Swap the state of the SRAM mirrors. This is a giant pain in the ass.
         *HOPEFULLY* a UC_HOOK_BLOCK will actually be called fast enough for
         the target code to be convinced that the mappings have changed.
+
+        FIXME: this doesn't implement transitions back while BROM is mapped.
         """
-
-        # This is the value that the mirror will transition to (False/True)
-        self.sram_mirror_next = en
-
+        self.sram_mirror_next = en # Next value (true/false)
         def breakpoint_hook(uc, addr, size, user_data):
             starlet = uc.parent
             if (starlet.brom_mapped == True):
@@ -160,11 +166,45 @@ class Starlet(object):
         self.schedule_mirror_hook = self.mu.hook_add(UC_HOOK_BLOCK, 
                 breakpoint_hook)
 
+    def schedule_brom_map(self, en):
+        """ Same as above, but for changing the BROM map state """
+        self.brom_mapped_next = en # next value (true/false)
+        def breakpoint_hook(uc, addr, size, user_data):
+            starlet = uc.parent
+            if (starlet.sram_mirror == True):
+                if (starlet.brom_mapped_next == False):
+                    starlet.brom_mapped = False
+                    log("Swapping BROM map to False pc={:08x}", 
+                            starlet.brom_mapped_next, addr)
 
-    def set_brom_mapped(self, enable):
-        """ Toggle the BROM mirror """
-        #if (enable == True):
-        return
+                    log("old regions")
+                    for r in uc.mem_regions(): 
+                        log("{:08x} {:08x} {:08x}", r[0],r[1],r[2])
+
+                    uc.mem_unmap(0xfff00000, 0x00020000) # brom
+                    uc.mem_unmap(0x0d400000, 0x00020000) # brom
+                    uc.mem_unmap(0xffff0000, 0x0000f800) # sram_a
+                    uc.mem_unmap(0xfffe0000, 0x00010000) # brom
+
+                    uc.mem_map_ptr(0xfff00000,0x00010000,UC_PROT_ALL, _sram_b)
+                    uc.mem_map_ptr(0x0d400000,0x00010000,UC_PROT_ALL, _sram_b)
+                    uc.mem_map_ptr(0xfff10000,0x00010000,UC_PROT_ALL, _sram_a)
+                    uc.mem_map_ptr(0x0d410000,0x00010000,UC_PROT_ALL, _sram_a)
+                    uc.mem_map_ptr(0xfffe0000,0x00010000,UC_PROT_ALL, _sram_b)
+                    uc.mem_map_ptr(0xffff0000,0x0000f800,UC_PROT_ALL, _sram_a)
+
+                    log("new regions")
+                    for r in uc.mem_regions(): 
+                        log("{:08x} {:08x} {:08x}", r[0],r[1],r[2])
+
+                    # Tell the starlet container we're done unmapping
+                    starlet.schedule_brom_map_done = True
+
+        # Add this hook, saving the index for later so we can remove it
+        self.schedule_brom_map_hook = self.mu.hook_add(UC_HOOK_BLOCK, 
+                breakpoint_hook)
+
+
 
 
     def __init_hook(self):
@@ -175,6 +215,10 @@ class Starlet(object):
         self.__register_mmio_device("NAND",    0x0d010000, 0x20, self.io.nand)
         self.__register_mmio_device("AES",     0x0d020000, 0x20, self.io.aes)
         self.__register_mmio_device("SHA1",    0x0d030000, 0x20, self.io.sha)
+
+        self.__register_mmio_device("ECHI",    0x0d040000,0x100, self.io.ehci)
+        self.__register_mmio_device("OHCI0",   0x0d050000,0x200, self.io.ohci0)
+        self.__register_mmio_device("OHCI1",   0x0d060000,0x200, self.io.ohci1)
 
         self.__register_mmio_device("IPC",     0x0d800000, 0x0c, self.io.ipc)
         self.__register_mmio_device("HW",      0x0d800010, 0x1c, self.io.hlwd)
@@ -236,11 +280,14 @@ class Starlet(object):
             if ((starlet.block_count % 0x100) == 0):
                 starlet.io.update()
 
-            # Kill the SRAM mirror callback after it's completed.
+            # Kill the SRAM mirror/BROM map callback after it's completed.
             # FIXME: I couldn't think of a better place to put this.
             if (starlet.schedule_mirror_done == True):
                 starlet.schedule_mirror_done = False
                 uc.hook_del(starlet.schedule_mirror_hook)
+            if (starlet.schedule_brom_map_done == True):
+                starlet.schedule_mirror_done = False
+                uc.hook_del(starlet.schedule_brom_map_hook)
 
             starlet.last_block_size = size
             starlet.block_count += 1

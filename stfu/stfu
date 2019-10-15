@@ -43,6 +43,7 @@ emu.load_otp("otp.bin")
 # Example: add breakpoints/logging to certain code regions
 #emu.add_code_logrange(0x0d400000, 0x0d402000)
 #emu.add_code_logrange(0x00000000, 0x00030000)
+#emu.add_code_logrange(0xffff2000, 0xffffffff)
 
 #emu.add_mem_logrange(0x0d410000, 0x0d420000)
 #emu.add_breakpoint(0xfff00000)
