@@ -459,6 +459,7 @@ class NANDInterface(object):
             elif (datasize == 0x840):
                 blk_data = nand_data[0x000:0x800]
                 ecc_data = nand_data[0x800:0x840]
+                #log("NAND read page addr1={:08x} dest={:08x}", self.addr1, self.dma_data_addr)
                 self.dma_write(self.dma_data_addr, blk_data)
                 self.dma_write(self.dma_ecc_addr, ecc_data)
                 if ((flags & NAND_FLAG_ECC) != 0):

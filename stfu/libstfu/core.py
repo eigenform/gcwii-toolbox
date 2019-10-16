@@ -16,6 +16,7 @@ from libstfu.util import *
 import sys
 from struct import pack, unpack
 import ctypes
+import time
 
 
 # These are the memory regions backing SRAM and BROM.
@@ -55,6 +56,10 @@ class Starlet(object):
 
         self.sram_mirror = False        # Current SRAM mirror state
         self.sram_mirror_next = False   # Changed by I/O
+
+        self.time_started = 0           # Walltime when emulation started
+        self.uptime_limit = None        # User-defined uptime limit
+        self.why = None                 # Reason for execution halt
 
         # These are used to co-ordinate the SRAM mirror toggle 
         self.schedule_mirror_done = False
@@ -195,13 +200,14 @@ class Starlet(object):
         # Interrupt handling hook?
         self.mu.hook_add(UC_HOOK_INTR, self.__get_intr_function())
 
-        # This hook handles MMIO
-        # self.mu.hook_add(UC_HOOK_BLOCK, self.__get_basic_block_func())
+    def enable_block_hook(self):
+        self.blocks_reached = []
+        self.mu.hook_add(UC_HOOK_BLOCK, self.__get_basic_block_func())
 
     def __get_intr_function(self):
         def intr_func(uc, intno, user_data):
             starlet = uc.parent
-            log("Got interrupt {:08x}", intno)
+            #log("Got interrupt {:08x}", intno)
             self.why = { "type": "interrupt", "intno": intno }
             starlet.mu.emu_stop()
         return intr_func
@@ -219,7 +225,7 @@ class Starlet(object):
         base = addr
         tail = base + size
 
-        log("Registering MMIO {:08x}-{:08x} for {}", base, tail, name)
+        #log("Registering MMIO {:08x}-{:08x} for {}", base, tail, name)
         if (io_device == None): io_device = self.io.dummy
         idx = self.mu.hook_add(UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE,
             self.__get_mmio_func(name, io_device), begin=base, end=tail)
@@ -229,37 +235,8 @@ class Starlet(object):
         """ Generate a Unicorn UC_HOOK_BLOCK handler """
         def basic_block_hook(uc, addr, size, user_data):
             starlet = uc.parent
-
-            #if (self.symbols):
-            #    log("Basic block at {:08x} ({})", addr,
-            #            starlet.find_symbol(addr))
-            #else:
-            #    log("Basic block at {:08x}", addr)
-
-            # FIXME: The period for I/O updates seems to heavily affect the
-            # speed of emulation, especially in cases where things are on-CPU
-            # which don't use any I/O at all. Tune this and find a good value.
-            # You basically trade off "speed of various I/O devices" for speed
-            # of everything else happening on-CPU.
-            #
-            # The utility of tuning this also probably depends on how long the
-            # emulation is/has been/will be running for.
-
-            # Potentially service any outstanding I/O work.
-            if ((starlet.block_count % 0x100) == 0):
-                starlet.io.update()
-
-            # Kill the SRAM mirror/BROM map callback after it's completed.
-            # FIXME: I couldn't think of a better place to put this.
-            if (starlet.schedule_mirror_done == True):
-                starlet.schedule_mirror_done = False
-                uc.hook_del(starlet.schedule_mirror_hook)
-            if (starlet.schedule_brom_map_done == True):
-                starlet.schedule_mirror_done = False
-                uc.hook_del(starlet.schedule_brom_map_hook)
-
-            starlet.last_block_size = size
-            starlet.block_count += 1
+            if (addr not in starlet.blocks_reached): 
+                starlet.blocks_reached.append(addr)
         return basic_block_hook
 
 
@@ -283,26 +260,8 @@ class Starlet(object):
 
         if (user_until): until = user_until
         self.booted = True
+        self.time_started = time.time()
         self.__do_mainloop(self.boot_vector, until)
-
-    def pause(self, bp_idx=None):
-        """ Pause emulation """
-        self.pause_ctx = self.mu.context_save()
-        self.pause_pc = self.mu.reg_read(UC_ARM_REG_PC)
-        self.mu.emu_stop()
-        self.running = False
-        if (bp_idx): self.mu.hook_del(bp_idx)
-        #warn("Emulator paused at {:08x}, context saved", self.pause_pc)
-
-    def resume(self):
-        self.mu.context_restore(self.pause_ctx)
-        try:
-            self.running = True
-            self.mu.emu_start(self.pause_pc, 0x00000000)
-        except UcError as e:
-            warn("ERROR: {}", e)
-            self.dump_state()
-            self.running = False
 
     def halt(self):
         """ Halt emulation """
@@ -326,7 +285,7 @@ class Starlet(object):
 
                 # Need to account for THUMB here because the PC doesn't
                 # necessarily encode this (idk if this is a Unicorn bug)
-                pc = self.mu.reg_read(UC_ARM_REG_PC)
+                pc = self.get_pc()
                 if ((self.mu.reg_read(UC_ARM_REG_CPSR) & 0x20) != 0):
                     pc |= 1
 
@@ -334,7 +293,7 @@ class Starlet(object):
                 self.mu.emu_start(pc, until, timeout=timeout, 
                         count=self.io._SRV_US)
                 self.main_ctx = self.mu.context_save()
-                pc = self.mu.reg_read(UC_ARM_REG_PC)
+                pc = self.get_pc()
 
                 # Detect looping halt branches
                 instr = self.read32(pc)
@@ -342,9 +301,7 @@ class Starlet(object):
                     warn("Halt loop detected at PC={:08x}", pc)
                     break
 
-                self.last_pc_timer = self.io.timer
-                self.last_pc = pc
-
+                # Handle breaks
                 if (self.why): 
                     if (self.why['type'] == 'interrupt'):
                         self.dump_state()
@@ -352,6 +309,16 @@ class Starlet(object):
                     if (self.why['type'] == 'sigint'):
                         self.dump_state()
                         break
+                    if (self.why['type'] == 'breakpoint'):
+                        break
+
+                if (self.uptime_limit):
+                    if ((time.time() - self.time_started) > self.uptime_limit):
+                        self.why = {'type':  'time_limit'}
+                        break
+
+                self.last_pc_timer = self.io.timer
+                self.last_pc = pc
 
                 # Do an I/O update; check other important platform things
                 self.io.update()
@@ -368,7 +335,7 @@ class Starlet(object):
             except UcError as e:
                 warn("ERROR: {}", e)
                 self.dump_state()
-                pc = self.mu.reg_read(UC_ARM_REG_PC)
+                pc = self.get_pc()
                 x = self.mu.mem_read(pc-0x10, 0x20)
                 log("Stopped at pc={:08x}, here's memory at pc-0x10:", pc)
                 hexdump_idt(x, 1)
@@ -429,6 +396,8 @@ class Starlet(object):
     def write16(self, addr, val): self.mu.mem_write(addr, pack(">H", val))
     def dma_write(self, addr, data): self.mu.mem_write(addr, bytes(data))
     def dma_read(self, addr, size): return self.mu.mem_read(addr, size)
+    def get_pc(self): return self.mu.reg_read(UC_ARM_REG_PC)
+    def get_lr(self): return self.mu.reg_read(UC_ARM_REG_LR)
 
     """ -----------------------------------------------------------------------
     Functions for attaching devices and/or importing some other kinds
@@ -445,11 +414,11 @@ class Starlet(object):
         """ Attach a NAND dump to the NANDInterface. This reads the entire
         NAND dump into memory at once """
         with open(filename, "rb") as f: self.io.nand.data = f.read()
-        log("Imported NAND from {} ({:08x})", filename, len(self.io.nand.data))
+        #log("Imported NAND from {} ({:08x})", filename, len(self.io.nand.data))
 
     def load_nand_data(self, buf):
         """ Attach a NAND dump from a bytearray """
-        self.io.nand.data = buf
+        self.io.nand.data = bytearray(buf)
 
     def load_code_file(self, filename, addr, entry=None):
         """ Load some code into memory at the specified address """
@@ -471,7 +440,7 @@ class Starlet(object):
         """ Attach an OTP memory dump from some file """
         with open(filename, "rb") as f: OTP_DATA = f.read()
         self.io.otp.data = OTP_DATA
-        log("Loaded {:08x} bytes from {} to OTP", len(OTP_DATA), filename)
+        #log("Loaded {:08x} bytes from {} to OTP", len(OTP_DATA), filename)
 
     def load_symbols(self, filename):
         """ Load a CSV file with symbols into memory. Expects a file with some
@@ -487,7 +456,7 @@ class Starlet(object):
                 addr = int(x[0], 16)
                 name = x[1]
                 self.symbols[addr] = name
-        log("Imported {} symbols from {}", len(self.symbols), filename)
+        #log("Imported {} symbols from {}", len(self.symbols), filename)
 
 
     """ -----------------------------------------------------------------------
@@ -552,7 +521,7 @@ class Starlet(object):
         """ Generate an MMIO-handler specific to the provided I/O device """
         def mem_logrange(uc, access, addr, size, value, user_data):
             starlet = uc.parent
-            pc = starlet.mu.reg_read(UC_ARM_REG_PC)
+            pc = starlet.get_pc()
             acc = "write" if access == UC_MEM_WRITE else "read"
             log("TRACE: {} {} memaddr={:08x},val={:08x}",
                     acc, self.__get_locinfo(pc), addr, value)
@@ -564,7 +533,7 @@ class Starlet(object):
         """ Generate a handler for un-mapped memory accesses """
         def hook_unmapped(uc, access, addr, size, value, user_data):
             starlet = uc.parent
-            pc = uc.reg_read(UC_ARM_REG_PC)
+            pc = starlet.get_pc()
             acc_type = "write" if access == UC_MEM_WRITE_UNMAPPED else "read"
             warn("MMU error: pc={:08x} Unmapped {} {:08x} on {:08x}", pc,
                     acc_type, value, addr)
@@ -572,9 +541,9 @@ class Starlet(object):
             return False
         return hook_unmapped
 
-    def dump_state(self):
+    def dump_state(self, silent=False):
         """ Quick hack for dumping some machine state """
-        pc = self.mu.reg_read(UC_ARM_REG_PC)
+        pc = self.get_pc()
         lr = self.mu.reg_read(UC_ARM_REG_LR)
         sp = self.mu.reg_read(UC_ARM_REG_SP)
         r0 = self.mu.reg_read(UC_ARM_REG_R0)
@@ -599,8 +568,33 @@ class Starlet(object):
             \nr0={:08x}  r1={:08x}   r2={:08x}   r3={:08x} r4={:08x}  r5={:08x}\
             \nr6={:08x}  r7={:08x}   r8={:08x}   r9={:08x} r10={:08x} r11={:08x}\
             \nr12={:08x} """
-        log(fmt, pc, lr, sp, cpsr, spsr, apsr, 
-                r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,)
+
+        ctx = {
+                'pc': pc,
+                'lr': lr,
+                'sp': sp,
+                'cpsr': cpsr,
+                'spsr': spsr,
+                'apsr': apsr,
+                'r0': r0,
+                'r1': r1,
+                'r2': r2,
+                'r3': r3,
+                'r4': r4,
+                'r5': r5,
+                'r6': r6,
+                'r7': r7,
+                'r8': r8,
+                'r9': r9,
+                'r10': r10,
+                'r11': r11,
+                'r12': r12,
+        }
+ 
+        if (silent == False):
+            log(fmt, pc, lr, sp, cpsr, spsr, apsr, 
+                    r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,)
                 
+        return ctx
 
 
