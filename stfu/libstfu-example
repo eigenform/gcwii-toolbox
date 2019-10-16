@@ -1,27 +1,10 @@
 #!/usr/bin/python3
-""" stfu - STarlet FUzzer
 
-   This place is a message...  
-   and part of a system of messages ...
-   pay attention to it!
-
-                   Sending this message was important to us. 
-               We considered ourselves to be a powerful culture.
-
-                                      This place is not a place of honor ...  
-                             no highly esteemed deed is commemorated here... 
-                                                     nothing valued is here.
-"""
-
-
-from binascii import hexlify, unhexlify
-from struct import pack, unpack
 from sys import argv
-
 from libstfu.core import *
 
-if (len(argv) < 3):
-    print("usage: {} <ARM binary> <NAND dump>".format(argv[0]))
+if (len(argv) < 2):
+    print("usage: {} <NAND dump>".format(argv[0]))
     exit()
 
 # Create an instance of the emulator
@@ -34,7 +17,7 @@ stfu_register_sigint_handler(emu)
 #   - A copy of the boot ROM (boot0)
 
 emu.load_boot0("boot0.bin")
-emu.load_nand(argv[2])
+emu.load_nand_file(argv[1])
 emu.load_otp("otp.bin")
 
 # Example: pre-configure memory and/or machine state
@@ -50,9 +33,9 @@ emu.load_otp("otp.bin")
 
 # Example: load and start an arbitrary binary at some address
 # You can also load symbols to annotate logging/disassembly
-#emu.load_code(argv[1], 0x0d400000)
+#emu.load_code_file(argv[1], 0x0d400000)
 #emu.load_symbols("boot1c.csv")
 
 # Start emulation
-emu.run()
+emu.boot()
 

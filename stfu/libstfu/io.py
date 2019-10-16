@@ -15,14 +15,17 @@ from struct import pack, unpack
 class StarletIO(object):
     """ Top-level container for managing Hollywood and I/O device state """
     def __init__(self, parent):
-        self.timer = 0
+
+        self._SRV_US = 1000     # Period of I/O updates in microseconds
+        self.timer = 0          # Hollywood timer state
+
         self.starlet = parent
         self.dummy = DummyInterface(parent)
 
         self.nand = NANDInterface(parent)
         self.ahb = AHBInterface(parent)
         self.gpio = GPIOInterface(parent)
-        self.aes = AESInterface(parent)
+        self.aes = AESInterface(parent, self)
         self.sha = SHAInterface(parent)
         self.otp = OTPInterface(parent)
         self.ipc = IPCInterface(parent)
@@ -35,13 +38,16 @@ class StarletIO(object):
 
     def update(self):
         """ Update various aspects of I/O or chipset state """
-        self.timer += self.starlet.last_block_size * 0x10
+
+        # The period of the timer is 526.7ns, about twice a us
+        self.timer += self._SRV_US * 2
         self.starlet.write32(HW_TIMER, self.timer)
+
         self.nand.update()
         self.aes.update()
         self.sha.update()
         self.ahb.update()
-        self.gpio.update()
+        #self.gpio.update()
 
 # -----------------------------------------------------------------------------
 class DummyInterface(object):
@@ -93,7 +99,7 @@ class HollywoodInterface(object):
         if (access == UC_MEM_WRITE):
             if (addr == HW_SPARE0): self.starlet.io.ahb.spare0_flags = value
             if (addr == HW_MEMIRR):
-                log("SRNPROT set to {:08x}", value)
+                #log("SRNPROT set to {:08x}", value)
 
                 # If the SRAM mirror changes, schedule an event to change it
                 self.sram_mirror = True if ((value & 0x20) != 0) else False
@@ -101,7 +107,7 @@ class HollywoodInterface(object):
                     self.starlet.schedule_mirror(self.sram_mirror)
 
             if (addr == HW_BOOT0):
-                log("HW_BOOT0 set to {:08x}", value)
+                #log("HW_BOOT0 set to {:08x}", value)
 
                 self.brom_mapped = False if ((value & 0x1000) != 0) else True
                 if (self.brom_mapped != self.starlet.brom_mapped):
@@ -138,7 +144,7 @@ class AHBInterface(object):
         # ACK a pending flush request
         if (self.flush_req != None):
             self.starlet.write16(MEM_FLUSHACK, self.flush_req)
-            #log("AHB ack flush ({:04x})", self.flush_req)
+            log("AHB ack flush ({:04x})", self.flush_req)
             self.flush_req = None
 
     def on_access(self, access, addr, size, value): 
@@ -253,12 +259,13 @@ class SHAInterface(object):
 
 from Crypto.Cipher import AES
 
-AES_FIFO_TIMEOUT = 10
+AES_FIFO_TIMEOUT = 1000
 class AESInterface(object):
     """ Container for the AES engine """
 
-    def __init__(self, parent):
+    def __init__(self, parent, io):
         self.starlet = parent
+        self.io = io
 
         self.dma_src = 0
         self.dma_dst = 0
@@ -280,14 +287,14 @@ class AESInterface(object):
     def update(self):
         # Handle the key FIFO window
         if (self.key_fifo_open == True):
-            ktimer_diff = self.starlet.block_count - self.key_fifo_timer
+            ktimer_diff = self.io.timer - self.key_fifo_timer
             if (ktimer_diff >= AES_FIFO_TIMEOUT):
                 self.key_fifo_open = False
                 self.key_fifo_timer = 0
 
         # Handle the IV FIFO window
         if (self.iv_fifo_open == True):
-            itimer_diff = self.starlet.block_count - self.iv_fifo_timer
+            itimer_diff = self.io.timer - self.iv_fifo_timer
             if (itimer_diff >= AES_FIFO_TIMEOUT):
                 self.iv_fifo_open = False
                 self.iv_fifo_timer = 0
@@ -312,7 +319,7 @@ class AESInterface(object):
                 if (self.key_fifo_open == False):
                     self.key_fifo_open = True
                     self.key_fifo_idx = 0
-                    self.key_fifo_timer = self.starlet.block_count
+                    self.key_fifo_timer = self.io.timer
                     self.key_fifo_update(value)
                 else:
                     self.key_fifo_update(value)
@@ -320,7 +327,7 @@ class AESInterface(object):
                 if (self.iv_fifo_open == False):
                     self.iv_fifo_open = True
                     self.iv_fifo_idx = 0
-                    self.iv_fifo_timer = self.starlet.block_count
+                    self.iv_fifo_timer = self.io.timer
                     self.iv_fifo_update(value)
                 else:
                     self.iv_fifo_update(value)
