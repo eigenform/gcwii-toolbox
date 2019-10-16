@@ -46,7 +46,8 @@ def __gen_sigint_handler(starlet_inst):
     # FIXME: assert type(starlet_inst) == Starlet
     def __stfu_handle_sigint(sig, frame):
         warn("Caught SIGINT, halting now!")
-        starlet_inst.halt()
+        starlet_inst.why = {"type": "sigint"}
+        starlet_inst.mu.emu_stop()
     return __stfu_handle_sigint
 
 def stfu_register_sigint_handler(starlet_inst):

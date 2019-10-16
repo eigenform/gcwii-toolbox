@@ -50,15 +50,19 @@ class Starlet(object):
         self.code_loaded = False    # Has user code been loaded?
         self.codelen = None         # Length of user code
 
+        self.brom_mapped = True         # Current BROM mapping state
+        self.brom_mapped_next = False   # Changed by I/O
+
+        self.sram_mirror = False        # Current SRAM mirror state
+        self.sram_mirror_next = False   # Changed by I/O
+
         # These are used to co-ordinate the SRAM mirror toggle 
         self.schedule_mirror_done = False
         self.schedule_mirror_hook = None
-        self.sram_mirror = False
 
         # For co-ordinating the BROM map toggle
         self.schedule_brom_map_done = False
         self.schedule_brom_map_hook = False
-        self.brom_mapped = True
 
         self.symbols = {}           # Dictionary of symbols
         self.last_block_size = 0    # Size of the previous basic block
@@ -100,7 +104,7 @@ class Starlet(object):
 
         # FIXME: investigate this a bit more
         # Initial SRAM/BROM mappings
-        self.mu.mem_map_ptr(0xffff0000, 0x0000f800, UC_PROT_ALL, _brom)
+        self.mu.mem_map_ptr(0xffff0000, 0x00010000, UC_PROT_ALL, _brom)
         self.mu.mem_map_ptr(0xfffe0000, 0x00010000, UC_PROT_ALL, _sram_a)
 
         self.mu.mem_map_ptr(0xfff00000, 0x00010000, UC_PROT_ALL, _sram_a)
@@ -125,93 +129,9 @@ class Starlet(object):
         self.mu.mem_map(0x00000000, 0x01800000) # MEM1
         self.mu.mem_map(0x10000000, 0x04000000) # MEM2
 
-    def schedule_mirror(self, en):
-        """ goddamn it 
-        Swap the state of the SRAM mirrors. This is a giant pain in the ass.
-        *HOPEFULLY* a UC_HOOK_BLOCK will actually be called fast enough for
-        the target code to be convinced that the mappings have changed.
-
-        FIXME: this doesn't implement transitions back while BROM is mapped.
-        """
-        self.sram_mirror_next = en # Next value (true/false)
-
-        def breakpoint_hook(uc, addr, size, user_data):
-            starlet = uc.parent
-            if (starlet.brom_mapped == True):
-                if (starlet.sram_mirror_next == True):
-                    starlet.sram_mirror = True
-                    log("Swapping sram mirror to True pc={:08x}", 
-                            starlet.sram_mirror_next, addr)
-
-                    log("old regions")
-                    for r in uc.mem_regions(): 
-                        log("{:08x} {:08x} {:08x}", r[0],r[1],r[2])
-
-                    uc.mem_unmap(0xffff0000, 0x0000f800) # brom
-                    uc.mem_unmap(0xfffe0000, 0x00010000) # sram_a
-                    uc.mem_unmap(0xfff00000, 0x00010000) # sram_a
-                    uc.mem_unmap(0x0d400000, 0x00010000) # sram_a
-                    uc.mem_unmap(0xfff10000, 0x00010000) # sram_b
-                    uc.mem_unmap(0x0d410000, 0x00010000) # sram_b
-
-                    uc.mem_map_ptr(0xfff00000,0x00020000,UC_PROT_ALL, _brom)
-                    uc.mem_map_ptr(0x0d400000,0x00020000,UC_PROT_ALL, _brom)
-                    uc.mem_map_ptr(0xffff0000,0x0000f800,UC_PROT_ALL, _sram_a)
-                    uc.mem_map_ptr(0xfffe0000,0x00010000,UC_PROT_ALL, _brom)
-
-                    log("new regions")
-                    for r in uc.mem_regions(): 
-                        log("{:08x} {:08x} {:08x}", r[0],r[1],r[2])
-
-                    # Tell the starlet container we're done swapping
-                    starlet.schedule_mirror_done = True
-
-        # Add this hook, saving the index for later so we can remove it
-        self.schedule_mirror_hook = self.mu.hook_add(UC_HOOK_BLOCK, 
-                breakpoint_hook)
-
-    def schedule_brom_map(self, en):
-        """ Same as above, but for changing the BROM map state """
-        self.brom_mapped_next = en # next value (true/false)
-
-        def breakpoint_hook(uc, addr, size, user_data):
-            starlet = uc.parent
-            if (starlet.sram_mirror == True):
-                if (starlet.brom_mapped_next == False):
-                    starlet.brom_mapped = False
-                    log("Swapping BROM map to False pc={:08x}", 
-                            starlet.brom_mapped_next, addr)
-
-                    log("old regions")
-                    for r in uc.mem_regions(): 
-                        log("{:08x} {:08x} {:08x}", r[0],r[1],r[2])
-
-                    uc.mem_unmap(0xfff00000, 0x00020000) # brom
-                    uc.mem_unmap(0x0d400000, 0x00020000) # brom
-                    uc.mem_unmap(0xffff0000, 0x0000f800) # sram_a
-                    uc.mem_unmap(0xfffe0000, 0x00010000) # brom
-
-                    uc.mem_map_ptr(0xfff00000,0x00010000,UC_PROT_ALL, _sram_b)
-                    uc.mem_map_ptr(0x0d400000,0x00010000,UC_PROT_ALL, _sram_b)
-                    uc.mem_map_ptr(0xfff10000,0x00010000,UC_PROT_ALL, _sram_a)
-                    uc.mem_map_ptr(0x0d410000,0x00010000,UC_PROT_ALL, _sram_a)
-                    uc.mem_map_ptr(0xfffe0000,0x00010000,UC_PROT_ALL, _sram_b)
-                    uc.mem_map_ptr(0xffff0000,0x0000f800,UC_PROT_ALL, _sram_a)
-
-                    log("new regions")
-                    for r in uc.mem_regions(): 
-                        log("{:08x} {:08x} {:08x}", r[0],r[1],r[2])
-
-                    # Tell the starlet container we're done unmapping
-                    starlet.schedule_brom_map_done = True
-
-        # Add this hook, saving the index for later so we can remove it
-        self.schedule_brom_map_hook = self.mu.hook_add(UC_HOOK_BLOCK, 
-                breakpoint_hook)
-
-    def brom_mapped_mirror_enable(self):
+    def brom_enabled_mirror_enable(self):
         """ When the BROM is mapped, enable the SRAM mirror """
-        self.mu.mem_unmap(0xffff0000, 0x0000f800) # brom
+        self.mu.mem_unmap(0xffff0000, 0x00010000) # brom
         self.mu.mem_unmap(0xfffe0000, 0x00010000) # sram_a
         self.mu.mem_unmap(0xfff00000, 0x00010000) # sram_a
         self.mu.mem_unmap(0x0d400000, 0x00010000) # sram_a
@@ -220,14 +140,14 @@ class Starlet(object):
 
         self.mu.mem_map_ptr(0xfff00000,0x00020000,UC_PROT_ALL, _brom)
         self.mu.mem_map_ptr(0x0d400000,0x00020000,UC_PROT_ALL, _brom)
-        self.mu.mem_map_ptr(0xffff0000,0x0000f800,UC_PROT_ALL, _sram_a)
+        self.mu.mem_map_ptr(0xffff0000,0x00010000,UC_PROT_ALL, _sram_a)
         self.mu.mem_map_ptr(0xfffe0000,0x00010000,UC_PROT_ALL, _brom)
 
     def mirror_enabled_brom_disable(self):
         """ When the SRAM mirror is enabled, unmap the BROM """
         uc.mem_unmap(0xfff00000, 0x00020000) # brom
         uc.mem_unmap(0x0d400000, 0x00020000) # brom
-        uc.mem_unmap(0xffff0000, 0x0000f800) # sram_a
+        uc.mem_unmap(0xffff0000, 0x00010000) # sram_a
         uc.mem_unmap(0xfffe0000, 0x00010000) # brom
 
         uc.mem_map_ptr(0xfff00000,0x00010000,UC_PROT_ALL, _sram_b)
@@ -235,7 +155,7 @@ class Starlet(object):
         uc.mem_map_ptr(0xfff10000,0x00010000,UC_PROT_ALL, _sram_a)
         uc.mem_map_ptr(0x0d410000,0x00010000,UC_PROT_ALL, _sram_a)
         uc.mem_map_ptr(0xfffe0000,0x00010000,UC_PROT_ALL, _sram_b)
-        uc.mem_map_ptr(0xffff0000,0x0000f800,UC_PROT_ALL, _sram_a)
+        uc.mem_map_ptr(0xffff0000,0x00010000,UC_PROT_ALL, _sram_a)
 
 
 
@@ -266,13 +186,26 @@ class Starlet(object):
         self.__register_mmio_device("EFUSE",   0x0d8001ec, 0x04, self.io.otp)
         self.__register_mmio_device("HW",      0x0d8001f4, 0x2c, self.io.hlwd)
 
+        self.__register_mmio_device("AHB",     0x0d8b4000, 0x40, self.io.ahb)
         self.__register_mmio_device("AHB",     0x0d8b4228, 0x02, self.io.ahb)
 
         # Error handling hooks
         self.mu.hook_add(UC_HOOK_MEM_UNMAPPED, self.__get_err_unmapped_func())
 
+        # Interrupt handling hook?
+        self.mu.hook_add(UC_HOOK_INTR, self.__get_intr_function())
+
         # This hook handles MMIO
         # self.mu.hook_add(UC_HOOK_BLOCK, self.__get_basic_block_func())
+
+    def __get_intr_function(self):
+        def intr_func(uc, intno, user_data):
+            starlet = uc.parent
+            log("Got interrupt {:08x}", intno)
+            self.why = { "type": "interrupt", "intno": intno }
+            starlet.mu.emu_stop()
+        return intr_func
+
 
     def __get_mmio_func(self, mmio_name, io_device):
         """ Generate an MMIO-handler specific to the provided I/O device """
@@ -286,7 +219,7 @@ class Starlet(object):
         base = addr
         tail = base + size
 
-        #log("Registering MMIO {:08x}-{:08x} for {}", base, tail, name)
+        log("Registering MMIO {:08x}-{:08x} for {}", base, tail, name)
         if (io_device == None): io_device = self.io.dummy
         idx = self.mu.hook_add(UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE,
             self.__get_mmio_func(name, io_device), begin=base, end=tail)
@@ -339,14 +272,14 @@ class Starlet(object):
         """ Start the system at the boot vector """
         if (self.use_boot0):
             self.boot_vector = 0xffff0000
-            until = 0xffffffff
+            until = 0x00000000
         else:
             if (self.code_loaded != True):
                 warn("No binary/entrypoint specified")
                 warn("Try loading a binary, or attaching NAND and boot ROM")
                 return None
             else:
-                until = halt if (halt != None) else 0xffffffff
+                until = halt if (halt != None) else 0x00000000
 
         if (user_until): until = user_until
         self.booted = True
@@ -365,7 +298,7 @@ class Starlet(object):
         self.mu.context_restore(self.pause_ctx)
         try:
             self.running = True
-            self.mu.emu_start(self.pause_pc, 0xffffffff)
+            self.mu.emu_start(self.pause_pc, 0x00000000)
         except UcError as e:
             warn("ERROR: {}", e)
             self.dump_state()
@@ -380,23 +313,68 @@ class Starlet(object):
     def __do_mainloop(self, entrypt, until, timeout=0, count=0):
         """ This is the main emulation loop  """
         self.running = True
+        _running = False
         self.mu.reg_write(UC_ARM_REG_PC, entrypt)
+        self.main_ctx = None
+        self.why = None
+        self.last_pc = 0
+        self.last_pc_timer = 0
         while True:
             try:
+
+                if (self.main_ctx): self.mu.context_restore(self.main_ctx)
+
+                # Need to account for THUMB here because the PC doesn't
+                # necessarily encode this (idk if this is a Unicorn bug)
                 pc = self.mu.reg_read(UC_ARM_REG_PC)
+                if ((self.mu.reg_read(UC_ARM_REG_CPSR) & 0x20) != 0):
+                    pc |= 1
+
+                # Start executing; 
                 self.mu.emu_start(pc, until, timeout=timeout, 
                         count=self.io._SRV_US)
+                self.main_ctx = self.mu.context_save()
+                pc = self.mu.reg_read(UC_ARM_REG_PC)
+
+                # Detect looping halt branches
+                instr = self.read32(pc)
+                if (instr == 0xeafffffe):
+                    warn("Halt loop detected at PC={:08x}", pc)
+                    break
+
+                self.last_pc_timer = self.io.timer
+                self.last_pc = pc
+
+                if (self.why): 
+                    if (self.why['type'] == 'interrupt'):
+                        self.dump_state()
+                        break
+                    if (self.why['type'] == 'sigint'):
+                        self.dump_state()
+                        break
+
+                # Do an I/O update; check other important platform things
                 self.io.update()
-                if (self.schedule_mirror_done == True):
-                    self.schedule_mirror_done = False
-                    self.mu.hook_del(self.schedule_mirror_hook)
-                if (self.schedule_brom_map_done == True):
-                    self.schedule_mirror_done = False
-                    self.mu.hook_del(self.schedule_brom_map_hook)
+                if (self.sram_mirror != self.sram_mirror_next):
+                    if (self.brom_mapped == True) and \
+                            (self.sram_mirror_next == True):
+                        self.brom_enabled_mirror_enable()
+
+                if (self.brom_mapped != self.brom_mapped_next):
+                    if (self.sram_mirror == True) and \
+                            (self.brom_mapped_next == False):
+                        self.mirror_enabled_brom_disable()
+
             except UcError as e:
                 warn("ERROR: {}", e)
                 self.dump_state()
+                pc = self.mu.reg_read(UC_ARM_REG_PC)
+                x = self.mu.mem_read(pc-0x10, 0x20)
+                log("Stopped at pc={:08x}, here's memory at pc-0x10:", pc)
+                hexdump_idt(x, 1)
+                self.dump_state()
                 self.running = False
+                self.mu.emu_stop()
                 break
 
 
@@ -406,10 +384,38 @@ class Starlet(object):
         return self.mu.hook_add(UC_HOOK_CODE, self.__get_breakpoint_func(),
                 begin=addr, end=addr)
 
-    def add_code_logrange(self, addr_base, addr_tail):
+    def add_breakpoint_patch(self, addr, my_patch_func):
+        """ Add a breakpoint hook at some address; pass a function to run"""
+        return self.mu.hook_add(UC_HOOK_CODE, 
+            self.__get_breakpoint_patch_func(my_patch_func), 
+            begin=addr, end=addr)
+
+    def __get_breakpoint_func(self):
+        """ Generate a breakpoint-like hook which halts emulation """
+        def breakpoint_hook(uc, addr, size, user_data):
+            starlet = uc.parent
+            #log("Hit breakpoint at pc={:08x}", addr)
+            self.why = { "type": "breakpoint" }
+            self.mu.emu_stop()
+        return breakpoint_hook
+
+    def __get_breakpoint_patch_func(self, my_func):
+        """ This isn't actually a breakpoint. Calls my_func(starlet).
+        """
+        def breakpoint_hook(uc, addr, size, user_data):
+            starlet = uc.parent
+            my_func(starlet)
+        return breakpoint_hook
+
+
+    def add_code_logrange(self, addr_base, addr_tail, detail=False):
         """ Add a hook for logging on some range of code """
-        self.mu.hook_add(UC_HOOK_CODE, self.__get_code_logrange_func(),
-                begin=addr_base, end=addr_tail)
+        if (detail == True):
+            self.mu.hook_add(UC_HOOK_CODE, self.__get_code_logrange_detail_func(),
+                    begin=addr_base, end=addr_tail)
+        else:
+            self.mu.hook_add(UC_HOOK_CODE, self.__get_code_logrange_func(),
+                    begin=addr_base, end=addr_tail)
 
     def add_mem_logrange(self, addr_base, addr_tail):
         """ Add a hook for logging on some range of code """
@@ -439,7 +445,7 @@ class Starlet(object):
         """ Attach a NAND dump to the NANDInterface. This reads the entire
         NAND dump into memory at once """
         with open(filename, "rb") as f: self.io.nand.data = f.read()
-        #log("Imported NAND from {} ({:08x})", filename, len(self.io.nand.data))
+        log("Imported NAND from {} ({:08x})", filename, len(self.io.nand.data))
 
     def load_nand_data(self, buf):
         """ Attach a NAND dump from a bytearray """
@@ -465,7 +471,7 @@ class Starlet(object):
         """ Attach an OTP memory dump from some file """
         with open(filename, "rb") as f: OTP_DATA = f.read()
         self.io.otp.data = OTP_DATA
-        #log("Loaded {:08x} bytes from {} to OTP", len(OTP_DATA), filename)
+        log("Loaded {:08x} bytes from {} to OTP", len(OTP_DATA), filename)
 
     def load_symbols(self, filename):
         """ Load a CSV file with symbols into memory. Expects a file with some
@@ -481,7 +487,7 @@ class Starlet(object):
                 addr = int(x[0], 16)
                 name = x[1]
                 self.symbols[addr] = name
-        #log("Imported {} symbols from {}", len(self.symbols), filename)
+        log("Imported {} symbols from {}", len(self.symbols), filename)
 
 
     """ -----------------------------------------------------------------------
@@ -534,6 +540,14 @@ class Starlet(object):
             log("TRACE: {}", self.__get_locinfo(addr))
         return logrange_hook
 
+    def __get_code_logrange_detail_func(self):
+        def logrange_hook(uc, addr, size, user_data):
+            starlet = uc.parent
+            log("TRACE: {}", self.__get_locinfo(addr))
+            starlet.dump_state()
+        return logrange_hook
+
+
     def __get_mem_logrange_func(self):
         """ Generate an MMIO-handler specific to the provided I/O device """
         def mem_logrange(uc, access, addr, size, value, user_data):
@@ -545,21 +559,16 @@ class Starlet(object):
         return mem_logrange
 
 
-    def __get_breakpoint_func(self):
-        """ Generate a breakpoint-like hook which halts emulation """
-        def breakpoint_hook(uc, addr, size, user_data):
-            starlet = uc.parent
-            #log("Hit breakpoint at pc={:08x}", addr)
-            starlet.pause()
-        return breakpoint_hook
 
     def __get_err_unmapped_func(self):
         """ Generate a handler for un-mapped memory accesses """
         def hook_unmapped(uc, access, addr, size, value, user_data):
+            starlet = uc.parent
             pc = uc.reg_read(UC_ARM_REG_PC)
             acc_type = "write" if access == UC_MEM_WRITE_UNMAPPED else "read"
             warn("MMU error: pc={:08x} Unmapped {} {:08x} on {:08x}", pc,
                     acc_type, value, addr)
+            starlet.disas(pc, 0x20)
             return False
         return hook_unmapped
 
@@ -578,10 +587,20 @@ class Starlet(object):
         r7 = self.mu.reg_read(UC_ARM_REG_R7)
         r8 = self.mu.reg_read(UC_ARM_REG_R8)
         r9 = self.mu.reg_read(UC_ARM_REG_R9)
+        r10 = self.mu.reg_read(UC_ARM_REG_R10)
+        r11 = self.mu.reg_read(UC_ARM_REG_R11)
+        r12 = self.mu.reg_read(UC_ARM_REG_R12)
+        cpsr = self.mu.reg_read(UC_ARM_REG_CPSR)
+        spsr = self.mu.reg_read(UC_ARM_REG_SPSR)
+        apsr = self.mu.reg_read(UC_ARM_REG_APSR)
+        c1_c0_2 = self.mu.reg_read(UC_ARM_REG_C1_C0_2)
 
-        fmt = """pc={:08x} lr={:08x} sp={:08x}\
-            \nr0={:08x} r1={:08x} r2={:08x} r3={:08x} r4={:08x} r5={:08x}\
-            \nr6={:08x} r7={:08x} r8={:08x} r9={:08x} """
-        log(fmt, pc,lr,sp,r0,r1,r2,r3,r4,r5,r6,r7,r8,r9)
+        fmt = """pc={:08x} lr={:08x} sp={:08x} CPSR={:08x} SPSR={:08x} IPSR={:08x}\
+            \nr0={:08x}  r1={:08x}   r2={:08x}   r3={:08x} r4={:08x}  r5={:08x}\
+            \nr6={:08x}  r7={:08x}   r8={:08x}   r9={:08x} r10={:08x} r11={:08x}\
+            \nr12={:08x} """
+        log(fmt, pc, lr, sp, cpsr, spsr, apsr, 
+                r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,)
+                
 
 

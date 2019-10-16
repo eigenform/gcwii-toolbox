@@ -16,7 +16,7 @@ class StarletIO(object):
     """ Top-level container for managing Hollywood and I/O device state """
     def __init__(self, parent):
 
-        self._SRV_US = 1000     # Period of I/O updates in microseconds
+        self._SRV_US = 0x1000     # Period of I/O updates num instrs
         self.timer = 0          # Hollywood timer state
 
         self.starlet = parent
@@ -41,13 +41,15 @@ class StarletIO(object):
 
         # The period of the timer is 526.7ns, about twice a us
         self.timer += self._SRV_US * 2
+        if (self.timer >= 0xffffffff):
+            self.timer = 0
         self.starlet.write32(HW_TIMER, self.timer)
 
         self.nand.update()
         self.aes.update()
         self.sha.update()
         self.ahb.update()
-        #self.gpio.update()
+        self.gpio.update()
 
 # -----------------------------------------------------------------------------
 class DummyInterface(object):
@@ -103,15 +105,21 @@ class HollywoodInterface(object):
 
                 # If the SRAM mirror changes, schedule an event to change it
                 self.sram_mirror = True if ((value & 0x20) != 0) else False
-                if (self.sram_mirror != self.starlet.sram_mirror):
-                    self.starlet.schedule_mirror(self.sram_mirror)
+                self.starlet.sram_mirror_next  = self.sram_mirror
+
+                
+                #if (self.sram_mirror != self.starlet.sram_mirror):
+                #    self.starlet.schedule_mirror(self.sram_mirror)
 
             if (addr == HW_BOOT0):
                 #log("HW_BOOT0 set to {:08x}", value)
 
+                # If the BROM mapping changes, schedule the change
                 self.brom_mapped = False if ((value & 0x1000) != 0) else True
-                if (self.brom_mapped != self.starlet.brom_mapped):
-                    self.starlet.schedule_brom_map(self.brom_mapped)
+                self.starlet.brom_mapped_next  = self.brom_mapped
+
+                #if (self.brom_mapped != self.starlet.brom_mapped):
+                #    self.starlet.schedule_brom_map(self.brom_mapped)
 
 # -----------------------------------------------------------------------------
 class IPCInterface(object):
@@ -144,10 +152,12 @@ class AHBInterface(object):
         # ACK a pending flush request
         if (self.flush_req != None):
             self.starlet.write16(MEM_FLUSHACK, self.flush_req)
-            log("AHB ack flush ({:04x})", self.flush_req)
+            #log("AHB ack flush ({:04x})", self.flush_req)
             self.flush_req = None
 
     def on_access(self, access, addr, size, value): 
+        acc = "write" if access == UC_MEM_WRITE else "read"
+        #log("AHB {} on {:08x}", acc, addr)
         if (access == UC_MEM_WRITE):
             if (addr == MEM_FLUSHREQ): 
                 self.flush_req = value
@@ -170,7 +180,7 @@ class OTPInterface(object):
                     addr = value & 0x1f
                     otp_word = up32(self.data[addr*4:(addr*4)+4])
                     self.starlet.write32(EFUSE_DATA, otp_word)
-                    log("OTP read: addr={:02x}, res={:08x}", addr, otp_word)
+                    #log("OTP read: addr={:02x}, res={:08x}", addr, otp_word)
                     self.starlet.write32(EFUSE_ADDR, 0) # FIXME: ????
 
 
@@ -183,14 +193,15 @@ class GPIOInterface(object):
         self.arm_out = 0
 
     def update(self):
-        out = self.starlet.read32(GPIO_OUT)
-        if (self.arm_out != out):
-            log("ARMGPIO output set to {:08x}", out)
-            self.arm_out = out
+        #out = self.starlet.read32(GPIO_OUT)
+        #if (self.arm_out != out):
+        #    log("ARMGPIO output set to {:08x}", out)
+        #    self.arm_out = out
+        return
 
     def on_access(self, access, addr, size, value): 
         if (access == UC_MEM_WRITE):
-            #if (addr == GPIO_OUT): log("ARMGPIO output set to {:08x}", out)
+            #if (addr == GPIO_OUT): log("ARMGPIO output set to {:08x}", value)
             pass
         return
 
@@ -219,9 +230,9 @@ class SHAInterface(object):
             self.starlet.write32(SHA_H3, ffi_sha1_get(3))
             self.starlet.write32(SHA_H4, ffi_sha1_get(4))
 
-            log("SHA digest updated to:\t {:08x}{:08x}{:08x}{:08x}{:08x}",
-                    ffi_sha1_get(0), ffi_sha1_get(1), ffi_sha1_get(2),
-                    ffi_sha1_get(3), ffi_sha1_get(4))
+            #log("SHA digest updated to:\t {:08x}{:08x}{:08x}{:08x}{:08x}",
+            #        ffi_sha1_get(0), ffi_sha1_get(1), ffi_sha1_get(2),
+            #        ffi_sha1_get(3), ffi_sha1_get(4))
 
             # Indicate that we've completed the request
             self.starlet.write32(SHA_CTRL,
@@ -359,13 +370,13 @@ class AESInterface(object):
         self.dma_dst += num_bytes
 
     def dma_read(self, addr, size):
-        log("AES DMA read: addr={:08x}, len={:08x}", addr, size)
+        #log("AES DMA read: addr={:08x}, len={:08x}", addr, size)
         data = self.starlet.dma_read(self.dma_src, size)
         #hexdump_idt(data, 1)
         return data
 
     def dma_write(self, addr, data):
-        log("AES DMA write: addr={:08x}, len={:08x}", addr, len(data))
+        #log("AES DMA write: addr={:08x}, len={:08x}", addr, len(data))
         #hexdump_idt(data, 1)
         self.starlet.dma_write(addr, data)
 
@@ -440,8 +451,7 @@ class NANDInterface(object):
             self.starlet.halt()
 
         if (cmd == 0x00): pass
-        elif (cmd == NAND_CMD_RESET):
-            log("NAND RESET")
+        elif (cmd == NAND_CMD_RESET): pass
         elif(cmd == NAND_CMD_READ0b):
             nand_data = self.nand_read(datasize)
             if (datasize <= 0x800):
@@ -466,7 +476,7 @@ class NANDInterface(object):
 
     def dma_write(self, addr, data):
         self.starlet.dma_write(addr, data)
-        log("NAND DMA write: addr={:08x}, len={:08x}", addr, len(data))
+        #log("NAND DMA write: addr={:08x}, len={:08x}", addr, len(data))
         #hexdump_idt(self.starlet.dma_read(addr, 0x100), 1)
 
     def nand_read(self, size):
