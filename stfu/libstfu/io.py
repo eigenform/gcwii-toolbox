@@ -466,8 +466,9 @@ class NANDInterface(object):
                     for i in range(0, 4):
                         data = nand_data[i * 512:(i * 512)+512]
                         daddr = (self.dma_ecc_addr ^ 0x40) + i * 4
-                        ecc = self.calc_ecc(data)
+                        ecc = calc_ecc(data)
                         self.starlet.write32(daddr, ecc)
+                        #log("wrote ecc at {:08x}, ecc_addr={:08x}", daddr, self.dma_ecc_addr)
             else:
                 log("NAND unimpl datasize")
                 self.starlet.halt()
@@ -485,45 +486,4 @@ class NANDInterface(object):
         off = self.addr1 * NAND_PAGE_LEN
         return self.data[off:off + size]
 
-    def parity(self, x):
-        y = 0
-        while (x != 0):
-            y ^= (x & 1)
-            x >>= 1
-        return y
-
-    def calc_ecc(self, data):
-        ecc = [ 0, 0, 0, 0 ]
-
-        a = []
-        for i in range(0, 12): a.append([0, 0])
-
-        for i in range(0, 512):
-            for j in range(0, 9):
-                a[3+j][(i>>j)&1] ^= data[i]
-
-        x = a[3][0] ^ a[3][1]
-        a[0][0] = x & 0x55
-        a[0][1] = x & 0xaa
-        a[1][0] = x & 0x33
-        a[1][1] = x & 0xcc
-        a[2][0] = x & 0x0f
-        a[2][1] = x & 0xf0
-
-        for j in range(0, 12):
-            a[j][0] = self.parity(a[j][0])
-            a[j][1] = self.parity(a[j][1])
-
-        a0 = 0
-        a1 = 0
-        for j in range(0, 12):
-            a0 |= (a[j][0] << j) & 0xffffffff
-            a1 |= (a[j][1] << j) & 0xffffffff
-
-        ecc[0] = a0 & 0xff;
-        ecc[1] = (a0 >> 8) & 0xff
-        ecc[2] = a1 & 0xff
-        ecc[3] = (a1 >> 8) & 0xff
-
-        return (ecc[0] << 24 | ecc[1] << 16 | ecc[2] << 8 | ecc[3])
 
