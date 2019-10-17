@@ -133,15 +133,18 @@ print("[*] cert_len={:08x}, ticket_len={:08x}, tmd_len={:08x}".format(certlen,
 cur = hdrlen
 
 # Pull out certificate chain data
+print("[*] Cert data starts at {:08x}".format(cur))
 cert_data = boot2[cur:cur+certlen]
 cur += certlen
 
 # Pull out ticket data
+print("[*] Ticket data starts at {:08x}".format(cur))
 ticket_data = boot2[cur:cur+tiklen]
 ticket = Ticket(ticket_data)
 cur += tiklen
 
 # Pull out title metadata
+print("[*] TMD data starts at {:08x}".format(cur))
 tmd_data = boot2[cur:cur+tmdlen]
 tmd = TitleMetadata(tmd_data)
 tmd.print_info()
@@ -154,6 +157,10 @@ boot2_data = boot2[doff:doff+boot2_len]
 # Decrypt actual boot2 data
 boot2_ddata = ticket.cipher.decrypt(boot2_data)
 filename = "boot2v{:02d}.bin".format(tmd.title_version)
+hdr_filename = "boot2v{:02d}.hdr.bin".format(tmd.title_version)
 with open(filename, "wb") as f:
     f.write(boot2_ddata)
+
+with open(hdr_filename, "wb") as f:
+    f.write(boot2[0:hdrlen+certlen+tiklen+tmdlen+0x200])
 
