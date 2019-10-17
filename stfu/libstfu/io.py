@@ -16,7 +16,7 @@ class StarletIO(object):
     """ Top-level container for managing Hollywood and I/O device state """
     def __init__(self, parent):
 
-        self._SRV_US = 0x1000     # Period of I/O updates num instrs
+        self.hcnt = 0x1000      # Period of I/O updates in number of instrs
         self.timer = 0          # Hollywood timer state
 
         self.starlet = parent
@@ -40,7 +40,7 @@ class StarletIO(object):
         """ Update various aspects of I/O or chipset state """
 
         # The period of the timer is 526.7ns, about twice a us
-        self.timer += self._SRV_US * 2
+        self.timer += self.hcnt * 2
         if (self.timer >= 0xffffffff):
             self.timer = 0
         self.starlet.write32(HW_TIMER, self.timer)
@@ -101,25 +101,12 @@ class HollywoodInterface(object):
         if (access == UC_MEM_WRITE):
             if (addr == HW_SPARE0): self.starlet.io.ahb.spare0_flags = value
             if (addr == HW_MEMIRR):
-                #log("SRNPROT set to {:08x}", value)
-
-                # If the SRAM mirror changes, schedule an event to change it
                 self.sram_mirror = True if ((value & 0x20) != 0) else False
                 self.starlet.sram_mirror_next  = self.sram_mirror
-
-                
-                #if (self.sram_mirror != self.starlet.sram_mirror):
-                #    self.starlet.schedule_mirror(self.sram_mirror)
-
             if (addr == HW_BOOT0):
-                #log("HW_BOOT0 set to {:08x}", value)
-
-                # If the BROM mapping changes, schedule the change
                 self.brom_mapped = False if ((value & 0x1000) != 0) else True
                 self.starlet.brom_mapped_next  = self.brom_mapped
 
-                #if (self.brom_mapped != self.starlet.brom_mapped):
-                #    self.starlet.schedule_brom_map(self.brom_mapped)
 
 # -----------------------------------------------------------------------------
 class IPCInterface(object):
@@ -127,10 +114,8 @@ class IPCInterface(object):
     def __init__(self, parent): 
         self.starlet = parent
     def on_access(self, access, addr, size, value): 
-        warn("IPC is unimplemented, dying")
-        self.starlet.halt()
-        return
-
+        warn("IPC interface unimplemented")
+        self.starlet.halt("unimpl")
 
 # -----------------------------------------------------------------------------
 
@@ -448,7 +433,7 @@ class NANDInterface(object):
 
         if ((flags & NAND_FLAG_WRITE) != 0):
             warn("NAND write flags unimplemented?")
-            self.starlet.halt()
+            self.starlet.halt("unimpl")
 
         if (cmd == 0x00): pass
         elif (cmd == NAND_CMD_RESET): pass
@@ -459,7 +444,8 @@ class NANDInterface(object):
             elif (datasize == 0x840):
                 blk_data = nand_data[0x000:0x800]
                 ecc_data = nand_data[0x800:0x840]
-                #log("NAND read page addr1={:08x} dest={:08x}", self.addr1, self.dma_data_addr)
+                #log("NAND read page addr1={:08x} dest={:08x}", 
+                #    self.addr1, self.dma_data_addr)
                 self.dma_write(self.dma_data_addr, blk_data)
                 self.dma_write(self.dma_ecc_addr, ecc_data)
                 if ((flags & NAND_FLAG_ECC) != 0):
@@ -468,13 +454,14 @@ class NANDInterface(object):
                         daddr = (self.dma_ecc_addr ^ 0x40) + i * 4
                         ecc = calc_ecc(data)
                         self.starlet.write32(daddr, ecc)
-                        #log("wrote ecc at {:08x}, ecc_addr={:08x}", daddr, self.dma_ecc_addr)
+                        #log("wrote ecc at {:08x}, ecc_addr={:08x}", 
+                        #   daddr, self.dma_ecc_addr)
             else:
                 log("NAND unimpl datasize")
-                self.starlet.halt()
+                self.starlet.halt("unimpl")
         else:
             log("NAND: Unhandled cmd {:02x} ({:08x})", cmd, ctrl)
-            self.starlet.halt()
+            self.starlet.halt("unimpl")
 
     def dma_write(self, addr, data):
         self.starlet.dma_write(addr, data)
@@ -486,4 +473,13 @@ class NANDInterface(object):
         off = self.addr1 * NAND_PAGE_LEN
         return self.data[off:off + size]
 
+    def fix_all_ecc(self):
+        p_num = (len(self.data) // 0x840) - 1
+        for pn in range(p_num):
+            p_off = p_num * 0x840
+            for i in range(0, 4):
+                data_off = p_off + (0x200 * i)
+                ecc = calc_ecc(self.data[data_off:data_off+0x200])
+                ecc_off = p_off + 0x830 + (i * 4)
+                self.data[ecc_off:ecc_off+4] = pack(">L", ecc)
 
