@@ -16,7 +16,7 @@ class StarletIO(object):
     """ Top-level container for managing Hollywood and I/O device state """
     def __init__(self, parent):
 
-        self.hcnt = 0x1000      # Period of I/O updates in number of instrs
+        self.hcnt = 0x2000      # Period of I/O updates in number of instrs
         self.timer = 0          # Hollywood timer state
 
         self.starlet = parent
@@ -473,13 +473,18 @@ class NANDInterface(object):
         off = self.addr1 * NAND_PAGE_LEN
         return self.data[off:off + size]
 
-    def fix_all_ecc(self):
-        p_num = (len(self.data) // 0x840) - 1
-        for pn in range(p_num):
-            p_off = p_num * 0x840
+    def fix_all_ecc(self, plist=None):
+        if (plist == None):
+            plist = []
+            total_pages = (len(self.data) // 0x840) - 2
+            for pn in range(total_pages): plist.append(pn)
+
+        for pn in plist:
+            p_off = pn * 0x840
             for i in range(0, 4):
                 data_off = p_off + (0x200 * i)
                 ecc = calc_ecc(self.data[data_off:data_off+0x200])
                 ecc_off = p_off + 0x830 + (i * 4)
+                #x = unpack(">L", self.data[ecc_off:ecc_off+4])
                 self.data[ecc_off:ecc_off+4] = pack(">L", ecc)
 

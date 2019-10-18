@@ -44,34 +44,27 @@ class StarletDebugger(object):
             else: starlet.dbg.blocks[addr] = { 'size': size, 'visited': 1 }
         self.cov_hook_idx = self.starlet.mu.hook_add(UC_HOOK_BLOCK, __cov_hook)
 
-    def add_bp(self, addr):
+    def add_bp(self, addr, note=''):
         """ Create a simple breakpoint that halts at an address """
-        hook_id = self.starlet.mu.hook_add(UC_HOOK_CODE, 
-                self.__get_hook_code_tmpl(why='bp'), begin=addr, end=addr)
+        hook_func = self.__get_hook_code_bp_tmpl(note)
+        hook_id = self.starlet.mu.hook_add(UC_HOOK_CODE, hook_func, 
+                begin=addr, end=addr)
         self.breakpoints.append({"addr":addr, "hook_id": hook_id})
 
-    def add_event(self, addr, user_func, why=None):
-        """ Add a user-defined event to run at some address.
-        If a 'why' dict is passed, the event acts like a breakpoint.
-        """
-        hook_id = self.starlet.mu.hook_add(UC_HOOK_CODE, 
-                self.__get_hook_code_tmpl(user_func=user_func, why=why), 
-                    begin=addr, end=addr)
-        self.events.append({"addr":addr, "hook_id": hook_id})
-
-    def __get_hook_code_tmpl(self, user_func=None, why=None):
+    def __get_hook_code_bp_tmpl(self, note, user_func=None):
         """ Generate a template UC_HOOK_CODE function.
-        If a 'halt_why' dict is passed, the hook will halt emulation.
         If 'user_func(starlet)' is passed, run it in the hook. 
+        If 'note' is passed, it will be written to why['note'] on exit.
         """
         if (user_func == None): 
             def user_func(starlet): 
                 return
 
         def breakpoint_hook(uc, addr, size, user_data):
-            starlet = uc.parent # Ref to Starlet() object
-            user_func(starlet) # User-provided function
-            if (why): starlet.halt(why)
+            starlet = uc.parent
+            user_func(starlet)
+            bp_note = note
+            starlet.halt("bp", bp_note)
         return breakpoint_hook
 
     def add_symbol(self, addr, name): self.symbols[addr] = name
@@ -152,7 +145,7 @@ class Starlet(object):
 
         self.time_started = 0           # Walltime when emulation started
         self.uptime_limit = None        # User-defined uptime limit
-        self.halt_why = None            # Reason for execution halt
+        self.halt_reason = None            # Reason for execution halt
 
         self.mu.parent = self               # Unicorn ref to this object
         self.io = StarletIO(self)           # I/O device container
@@ -219,7 +212,7 @@ class Starlet(object):
     def __get_intr_function(self):
         def intr_func(uc, intno, user_data):
             starlet = uc.parent
-            starlet.halt("interrupt", msg=intno)
+            starlet.halt("interrupt", intno)
         return intr_func
 
     def __get_err_unmapped_func(self):
@@ -228,7 +221,7 @@ class Starlet(object):
             starlet = uc.parent
             pc = starlet.get_pc()
             d = {"access": access, "addr": addr, "size": size, "value": value}
-            starlet.halt("unmapped", msg=d)
+            starlet.halt("unmapped", d)
             return False
         return hook_unmapped
 
@@ -298,10 +291,9 @@ class Starlet(object):
         self.time_started = time.time()
         self.__do_mainloop(self.boot_vector, until)
 
-    def halt(self, why, msg=None):
-        """ Halt emulation and set starlet.halt_why """
-        if (msg): self.halt_why = { "why": why, "msg": msg }
-        else: self.halt_why = { "why": why }
+    def halt(self, why, note=''):
+        """ Halt emulation and set starlet.halt_reason """
+        self.halt_reason = { "why": why, "note": note }
         self.mu.emu_stop()
 
     def __do_mainloop(self, entrypt, until, timeout=0, count=0):
@@ -326,33 +318,33 @@ class Starlet(object):
                 # Unicorn doesn't interpret as an exception. Either we:
                 #
                 #   - Have done 'count' instrs, and need to update I/O things
-                #   - Got a halt request from something (check 'halt_why')
+                #   - Got a halt request from something (check 'halt_reason')
                 #
-                # All internal interfaces and hooks should set 'halt_why' 
+                # All internal interfaces and hooks should set 'halt_reason' 
                 # before halting emulation, so we can deal with them here.
-                # If we halt here for some other reason, set 'halt_why' so we
-                # can communicate the reason to some external user.
+                # If we halt here for some other reason, set 'halt_reason' so 
+                # we can communicate the reason to some external user.
 
                 self.main_ctx = self.mu.context_save()
 
                 # FIXME: It might be possible to do this in a hook?
                 # Detect an infinite branching instruction; just halt
                 if (self.read32(self.get_pc()) == 0xeafffffe):
-                    self.halt_why = {'why': 'inf_loop_branch'}
+                    self.halt_reason = {'why': 'inf_loop_branch', 'note': ''}
                     break
 
                 # Trigger halt if we run past the user-configured uptime limit
                 if (self.uptime_limit):
                     if ((time.time() - self.time_started) > self.uptime_limit):
-                        self.halt_why = {'why': 'time_limit'}
+                        self.halt_reason = {'why': 'time_limit', 'note': ''}
                         break
 
                 # Handle any pending requested halt, if it exists
-                if (self.halt_why): 
-                    if (self.halt_why['why'] == 'interrupt'): break
-                    if (self.halt_why['why'] == 'unimpl'): break
-                    if (self.halt_why['why'] == 'sigint'): break
-                    if (self.halt_why['why'] == 'bp'): break
+                if (self.halt_reason != None): 
+                    if (self.halt_reason['why'] == 'interrupt'): break
+                    if (self.halt_reason['why'] == 'unimpl'): break
+                    if (self.halt_reason['why'] == 'sigint'): break
+                    if (self.halt_reason['why'] == 'bp'): break
 
                 # FIXME: Perhaps deal with this somewhere else?
                 # If Hollywood requested a SRAM/BROM state change, do it now
@@ -377,6 +369,7 @@ class Starlet(object):
                 warn("Halted at pc={:08x}, here's memory at pc-0x10:", pc)
                 hexdump_idt(x, 1)
                 self.mu.emu_stop()
+                self.halt_reason = { 'why': 'exception', 'note': '' }
                 break
 
     def read32(self, addr): return up32(self.mu.mem_read(addr, 4))
@@ -423,14 +416,15 @@ class Starlet(object):
         """
         with open(filename, "rb") as f: self.io.nand.data = f.read()
 
-    def load_nand_data(self, buf, ecc_fix=False):
+    def load_nand_data(self, buf, fix_all_ecc=False):
         """ Attach a NAND dump from a bytearray.
         If 'ecc_fix' is enabled, re-compute all of the ECC data on all pages.
         I think this is necessary if the user has modified data out-of-band.
         Otherwise, the ECC errors will probably get corrected by software.
         """
         self.io.nand.data = bytearray(buf)
-        if (ecc_fix == True): self.io.nand.fix_all_ecc()
+        if (fix_all_ecc == True): 
+            self.io.nand.fix_all_ecc()
 
     def load_code_file(self, filename, addr, entry=None):
         """ Load a with with some  code into memory """
