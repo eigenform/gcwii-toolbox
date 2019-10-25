@@ -244,6 +244,7 @@ class SHAInterface(object):
 
     def handle_command(self, val):
         num_bytes = ((val & 0xfff) + 1) * 0x40
+        #log("SHA dma src={:08x}, len={:08x}", self.dma_src, num_bytes)
         src_data = self.starlet.dma_read(self.dma_src, num_bytes)
         #hexdump_idt(src_data, 1)
         buf = ctypes.c_ubyte * num_bytes
@@ -454,8 +455,7 @@ class NANDInterface(object):
                         daddr = (self.dma_ecc_addr ^ 0x40) + i * 4
                         ecc = calc_ecc(data)
                         self.starlet.write32(daddr, ecc)
-                        #log("wrote ecc at {:08x}, ecc_addr={:08x}", 
-                        #   daddr, self.dma_ecc_addr)
+                        #log("wrote ecc {:08x} at {:08x}", ecc, daddr)
             else:
                 log("NAND unimpl datasize")
                 self.starlet.halt("unimpl")

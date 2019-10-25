@@ -165,9 +165,9 @@ class Starlet(object):
         self.mu.mem_map_ptr(0xffff0000, 0x00010000, UC_PROT_ALL, _brom)
         self.mu.mem_map_ptr(0xfffe0000, 0x00010000, UC_PROT_ALL, _sram_a)
         self.mu.mem_map_ptr(0xfff00000, 0x00010000, UC_PROT_ALL, _sram_a)
+        self.mu.mem_map_ptr(0xfff10000, 0x00010000, UC_PROT_ALL, _sram_b)
         self.mu.mem_map_ptr(0x0d400000, 0x00010000, UC_PROT_ALL, _sram_a)
         self.mu.mem_map_ptr(0x0d410000, 0x00010000, UC_PROT_ALL, _sram_b)
-        self.mu.mem_map_ptr(0xfff10000, 0x00010000, UC_PROT_ALL, _sram_b)
 
         self.mu.mem_map(0x0d010000, 0x00001000) # NAND interface
         self.mu.mem_map(0x0d020000, 0x00001000) # AES interface

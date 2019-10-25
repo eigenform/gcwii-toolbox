@@ -20,6 +20,8 @@ emu.load_boot0("boot0.bin")
 emu.load_nand_file(argv[1])
 emu.load_otp("otp.bin")
 
+emu.dbg.add_bp(0x28710)
+
 # Example: pre-configure memory and/or machine state
 #emu.write16(0x0d403d94, 0x4770) # skyeye boot1 sleep() patch
 
@@ -28,26 +30,13 @@ emu.load_otp("otp.bin")
 #emu.add_code_logrange(0x00000000, 0x00030000)
 #emu.add_code_logrange(0xfff00000, 0xfff10000)
 
-# weird prefetch abort debug
-emu.add_code_logrange(0xffff237c, 0xffff23a0, detail=True)
-emu.add_code_logrange(0xffff60ec, 0xffff6108, detail=True)
-emu.add_code_logrange(0xffff23a4, 0xffff23b0, detail=True)
-
-def patch_mmu_init(starlet):
-    warn("patching 0xffff5214 with NOP")
-    # NOP the branch that does MMU init in boot2v4 stub
-    starlet.write32(0xffff5214, 0xe1a00000)
-emu.add_breakpoint_patch(0xffff5210, patch_mmu_init)
-#emu.add_code_logrange(0xffff3000, 0xffff8000)
-
-#emu.add_mem_logrange(0x0d410000, 0x0d420000)
-#emu.add_breakpoint(0xfff00000)
 
 # Example: load and start an arbitrary binary at some address
 # You can also load symbols to annotate logging/disassembly
 #emu.load_code_file(argv[1], 0x0d400000)
-emu.load_symbols("boot1c_fff0.csv")
+#emu.load_symbols("boot1c_fff0.csv")
 
 # Start emulation
 emu.boot()
+print(emu.halt_reason)
 
