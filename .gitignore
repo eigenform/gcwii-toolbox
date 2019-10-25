@@ -36,6 +36,7 @@
 !src/boot1-extract/sha1.h
 !stfu/
 !stfu/libstfu
+!stfu/README.md
 !stfu/libstfu-example
 !stfu/libstfu/core.py
 !stfu/libstfu/io.py
