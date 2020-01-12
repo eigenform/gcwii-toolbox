@@ -34,6 +34,12 @@
 !src/boot1-extract/Makefile
 !src/boot1-extract/sha1.c
 !src/boot1-extract/sha1.h
+!src/codehandler/
+!src/codehandler/stub.s
+!src/codehandler/main.c
+!src/codehandler/linker.ld
+!src/codehandler/Makefile
+!src/codehandler/README.md
 !stfu/
 !stfu/libstfu
 !stfu/README.md
