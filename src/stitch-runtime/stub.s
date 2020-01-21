@@ -36,9 +36,10 @@ _start:
 # The value of the pointer MUST be filled in by the software responsible for
 # installing this codehandler into memory. 
 
-.global codelist_ptr
-codelist_ptr:
-.long 0x00000000
+.global config
+config:
+.space 0x40
+
 
 # Save context before branching into the actual codehandler.
 # Whether or not this is necessary probably depends on how the codehandler
@@ -75,34 +76,8 @@ _save_context:
 	ori r21, r28, 0xff
 	sth r21, 0x4010(r20)
 
-# Validate that the current pointer to the codelist is not null.
-# Then, validate the magic bytes (0x00d0c0de) on the codelist. 
-# If the codelist isn't valid, just die.
-
-_check_codelist_ptr:
-	lis r13, codelist_ptr@h
-	ori r13, r13, codelist_ptr@l
-	lwz r15, 0x0(r13)
-	cmpwi r15, 0
-	beq _exit
-
-_check_codelist_header:
-	lis r3, 0x00d0
-	ori r3, r3, 0xc0de
-
-	lwz r4, 0x0(r15)
-	cmpw r3, r4
-	bne- _exit
-
-	lwz r4, 0x4(r15)
-	cmpw r3, r4
-	bne- _exit
-
-	#lwz r4, 0x8(r15)
-	#cmpwi r4, 0
-	#be- _exit
-
-	addi r15, r15, 0x8
+// Branch into the actual codehandler
+_run_codehandler:
 	bl _main
 
 # Restore state and return to the caller.
