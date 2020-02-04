@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<language_definitions>
+  <language processor="ARM"
+            endian="big"
+            size="32"
+            variant="Starlet"
+            version="1.101"
+            slafile="starlet.sla"
+            processorspec="starlet.pspec"
+            manualindexfile="../manuals/ARM.idx"
+            id="ARM:BE:32:Wii">
+    <description>Starlet ARM/Thumb v5t big endian</description>
+    <compiler name="default" spec="starlet.cspec" id="default"/>
+    <external_name tool="gnu" name="armv5t"/>
+    <external_name tool="IDA-PRO" name="armb"/>
+    <external_name tool="DWARF.register.mapping.file" name="ARM.dwarf"/>
+  </language>
+</language_definitions>

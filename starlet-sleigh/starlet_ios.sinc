@@ -11,7 +11,6 @@ define pcodeop ios_syscall;
 	# is intentionally used as a mechanism for implementing syscalls in IOS.
 	# 
 	# Just wire these up to branch to the exception vector on IOS.
-
-	pc = 0xffff0004;
-	goto [pc];
+	# pc = 0xffff0004;
+	# goto [pc];
 }

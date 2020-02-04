@@ -1,7 +1,12 @@
 *
 !.gitignore
 !Makefile
-!arm9ejs_ios.sinc
+!starlet-sleigh/
+!starlet-sleigh/starlet.cspec
+!starlet-sleigh/starlet_ios.sinc
+!starlet-sleigh/starlet.ldefs
+!starlet-sleigh/starlet.pspec
+!starlet-sleigh/starlet.slaspec
 !bin/
 !bin/freeblocks
 !bin/ios-extract
