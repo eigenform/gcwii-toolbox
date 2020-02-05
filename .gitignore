@@ -2,6 +2,7 @@
 !.gitignore
 !Makefile
 !starlet-sleigh/
+!starlet-sleigh/Makefile
 !starlet-sleigh/starlet.cspec
 !starlet-sleigh/starlet_ios.sinc
 !starlet-sleigh/starlet.ldefs
@@ -11,6 +12,8 @@
 !bin/freeblocks
 !bin/ios-extract
 !bin/ios-res-syscall
+!bin/gen-ios-sleigh
+!bin/ios.py
 !bin/dolparse
 !bin/gcm-extract
 !bin/keys-extract

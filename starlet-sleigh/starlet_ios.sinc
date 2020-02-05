@@ -1,14 +1,18 @@
-scname: "thread_create" is immed24=0x010 {}
-scname: "thread_join" is immed24=0x030 {}
-scname: "thread_cancel" is immed24=0x050 {}
-scname: "thread_get_id" is immed24=0x070 {}
-scname: "thread_get_pid" is immed24=0x090 {}
-scname: "thread_continue" is immed24=0x0b0 {}
-scname: "thread_suspend" is immed24=0x0d0 {}
-scname: "thread_yield" is immed24=0x0f0 {}
+# -------------------------------------------------------------
+# This file is auto-generated with gen-ios-sleigh; do NOT edit!
+# -------------------------------------------------------------
+
+scname: "thread_create" is immed24=0x10 {}
+scname: "thread_join" is immed24=0x30 {}
+scname: "thread_cancel" is immed24=0x50 {}
+scname: "thread_get_id" is immed24=0x70 {}
+scname: "thread_get_pid" is immed24=0x90 {}
+scname: "thread_continue" is immed24=0xb0 {}
+scname: "thread_suspend" is immed24=0xd0 {}
+scname: "thread_yield" is immed24=0xf0 {}
 scname: "thread_get_prio" is immed24=0x110 {}
 scname: "thread_set_prio" is immed24=0x130 {}
-scname: "mqueue_create"	is immed24=0x150 {}
+scname: "mqueue_create" is immed24=0x150 {}
 scname: "mqueue_destroy" is immed24=0x170 {}
 scname: "mqueue_send" is immed24=0x190 {}
 scname: "mqueue_jam" is immed24=0x1b0 {}
@@ -19,28 +23,28 @@ scname: "timer_create" is immed24=0x230 {}
 scname: "timer_restart" is immed24=0x250 {}
 scname: "timer_stop" is immed24=0x270 {}
 scname: "timer_destroy" is immed24=0x290 {}
-scname: "time_now" is immed24=0x2b0 {}
+scname: "timer_now" is immed24=0x2b0 {}
 scname: "heap_create" is immed24=0x2d0 {}
 scname: "heap_destroy" is immed24=0x2f0 {}
 scname: "heap_alloc" is immed24=0x310 {}
 scname: "heap_alloc_aligned" is immed24=0x330 {}
 scname: "heap_free" is immed24=0x350 {}
 scname: "register_device" is immed24=0x370 {}
-scname: "ios_open" is immed24=0x390 {}
-scname: "ios_close" is immed24=0x3b0 {}
-scname: "ios_read" is immed24=0x3d0 {}
-scname: "ios_write" is immed24=0x3f0 {}
-scname: "ios_seek" is immed24=0x410 {}
-scname: "ios_ioctl" is immed24=0x430 {}
-scname: "ios_ioctlv" is immed24=0x450 {}
-scname: "ios_open_async" is immed24=0x470 {}
-scname: "ios_close_async" is immed24=0x490 {}
-scname: "ios_read_async" is immed24=0x4b0 {}
-scname: "ios_write_async" is immed24=0x4d0 {}
-scname: "ios_seek_async" is immed24=0x4f0 {}
-scname: "ios_ioctl_async" is immed24=0x510 {}
-scname: "ios_ioctlv_async" is immed24=0x530 {}
-scname: "ios_resource_reply" is immed24=0x550 {}
+scname: "open" is immed24=0x390 {}
+scname: "close" is immed24=0x3b0 {}
+scname: "read" is immed24=0x3d0 {}
+scname: "write" is immed24=0x3f0 {}
+scname: "seek" is immed24=0x410 {}
+scname: "ioctl" is immed24=0x430 {}
+scname: "ioctlv" is immed24=0x450 {}
+scname: "open_async" is immed24=0x470 {}
+scname: "close_async" is immed24=0x490 {}
+scname: "read_async" is immed24=0x4b0 {}
+scname: "write_async" is immed24=0x4d0 {}
+scname: "seek_async" is immed24=0x4f0 {}
+scname: "ioctl_async" is immed24=0x510 {}
+scname: "ioctlv_async" is immed24=0x530 {}
+scname: "resource_reply" is immed24=0x550 {}
 scname: "set_uid" is immed24=0x570 {}
 scname: "get_uid" is immed24=0x590 {}
 scname: "set_gid" is immed24=0x5b0 {}
@@ -71,69 +75,61 @@ scname: "di_reset_deassert" is immed24=0x8b0 {}
 scname: "di_reset_check" is immed24=0x8d0 {}
 scname: "syscall_47" is immed24=0x8f0 {}
 scname: "syscall_48" is immed24=0x910 {}
-scname: "syscall_49" is immed24=0x930 {}
-scname: "syscall_4a" is immed24=0x950 {}
-scname: "kernel_debug_print" is immed24=0x970 {}
-scname: "kernel_set_version" is immed24=0x990 {}
-scname: "kernel_get_version" is immed24=0x9b0 {}
-scname: "syscall_4e" is immed24=0x9d0 {}
+scname: "get_boot_vector" is immed24=0x930 {}
+scname: "get_hlwd_rev" is immed24=0x950 {}
+scname: "debug_printf" is immed24=0x970 {}
+scname: "kernel_set_ver" is immed24=0x990 {}
+scname: "kernel_get_ver" is immed24=0x9b0 {}
+scname: "di_set_spinup" is immed24=0x9d0 {}
 scname: "virt_to_phys" is immed24=0x9f0 {}
 scname: "dvdvideo_set" is immed24=0xa10 {}
 scname: "dvdvideo_get" is immed24=0xa30 {}
-scname: "syscall_52" is immed24=0xa50 {}
-scname: "syscall_53" is immed24=0xa70 {}
+scname: "exictrl_bit4_toggle" is immed24=0xa50 {}
+scname: "exictrl_bit4_get" is immed24=0xa70 {}
 scname: "set_ahbprot" is immed24=0xa90 {}
 scname: "get_busclock" is immed24=0xab0 {}
 scname: "poke_gpio" is immed24=0xad0 {}
-scname: "syscall_57" is immed24=0xaf0 {}
-scname: "syscall_58" is immed24=0xb10 {}
-scname: "syscall_59" is immed24=0xb30 {}
-scname: "syscall_5a" is immed24=0xb50 {}
-scname: "syscall_5b" is immed24=0xb70 {}
-scname: "syscall_5c" is immed24=0xb90 {}
-scname: "syscall_5d" is immed24=0xbb0 {}
-scname: "syscall_5e" is immed24=0xbd0 {}
-scname: "syscall_5f" is immed24=0xbf0 {}
-scname: "syscall_60" is immed24=0xc10 {}
-scname: "syscall_61" is immed24=0xc30 {}
-scname: "syscall_62" is immed24=0xc50 {}
-scname: "syscall_63" is immed24=0xc70 {}
-scname: "syscall_64" is immed24=0xc90 {}
-scname: "syscall_65" is immed24=0xcb0 {}
-scname: "syscall_66" is immed24=0xcd0 {}
-scname: "syscall_67" is immed24=0xcf0 {}
-scname: "syscall_68" is immed24=0xd10 {}
-scname: "syscall_69" is immed24=0xd30 {}
-scname: "syscall_6a" is immed24=0xd50 {}
-scname: "syscall_6b" is immed24=0xd70 {}
-scname: "syscall_6c" is immed24=0xd90 {}
-scname: "syscall_6d" is immed24=0xdb0 {}
-scname: "syscall_6e" is immed24=0xdd0 {}
-scname: "syscall_6f" is immed24=0xdf0 {}
-scname: "syscall_70" is immed24=0xe10 {}
-scname: "syscall_71" is immed24=0xe30 {}
-scname: "syscall_72" is immed24=0xe50 {}
-scname: "syscall_73" is immed24=0xe70 {}
-scname: "syscall_74" is immed24=0xe90 {}
-scname: "syscall_75" is immed24=0xeb0 {}
-scname: "syscall_76" is immed24=0xed0 {}
-scname: "syscall_77" is immed24=0xef0 {}
-scname: "syscall_78" is immed24=0xf10 {}
-scname: "syscall_79" is immed24=0xf30 {}
+scname: "write_ddr_reg" is immed24=0xaf0 {}
+scname: "do_poke_dbg_port" is immed24=0xb10 {}
+scname: "load_ppc" is immed24=0xb30 {}
+scname: "load_module" is immed24=0xb50 {}
+scname: "iosc_create_obj" is immed24=0xb70 {}
+scname: "iosc_delete_obj" is immed24=0xb90 {}
+scname: "iosc_import_secret" is immed24=0xbb0 {}
+scname: "iosc_export_secret" is immed24=0xbd0 {}
+scname: "iosc_import_pubkey" is immed24=0xbf0 {}
+scname: "iosc_export_pubkey" is immed24=0xc10 {}
+scname: "iosc_compute_sharedkey" is immed24=0xc30 {}
+scname: "iosc_setdata" is immed24=0xc50 {}
+scname: "iosc_getdata" is immed24=0xc70 {}
+scname: "iosc_get_keysize" is immed24=0xc90 {}
+scname: "iosc_get_sigsize" is immed24=0xcb0 {}
+scname: "iosc_genhash_async" is immed24=0xcd0 {}
+scname: "iosc_genhash" is immed24=0xcf0 {}
+scname: "iosc_encrypt_async" is immed24=0xd10 {}
+scname: "iosc_encrypt" is immed24=0xd30 {}
+scname: "iosc_decrypt_async" is immed24=0xd50 {}
+scname: "iosc_decrypt" is immed24=0xd70 {}
+scname: "iosc_verify_pubkey" is immed24=0xd90 {}
+scname: "iosc_gen_blockmac" is immed24=0xdb0 {}
+scname: "iosc_gen_blockmac_async" is immed24=0xdd0 {}
+scname: "iosc_import_cert" is immed24=0xdf0 {}
+scname: "iosc_get_device_cert" is immed24=0xe10 {}
+scname: "iosc_set_owner" is immed24=0xe30 {}
+scname: "iosc_get_owner" is immed24=0xe50 {}
+scname: "iosc_gen_rand" is immed24=0xe70 {}
+scname: "iosc_gen_key" is immed24=0xe90 {}
+scname: "iosc_gen_pubkey" is immed24=0xeb0 {}
+scname: "iosc_gen_cert" is immed24=0xed0 {}
+scname: "iosc_check_dihash" is immed24=0xef0 {}
+scname: "iosc_set_unk" is immed24=0xf10 {}
+scname: "iosc_get_unk" is immed24=0xf30 {}
 
 define pcodeop ios;
-:ios^COND scname	is $(AMODE) & COND & c2831=14 & c2427=6 & immed24 & scname
+:ios^COND scname is $(AMODE) & COND & c2831=14 & c2427=6 & immed24 & scname
 {
 	build COND;
 	build scname;
-
-	# The syscall ID is ((low 24 bits >> 5) & 0xff)
 	id:4 = (immed24 >> 5) & 0xff;
-
-	# Ghidra has no way of knowing that the unhandled opcode exception vector
-	# is intentionally used as a mechanism for implementing syscalls in IOS.
-	# 
-	# Just wire these up to branch to the exception vector on IOS.
-	# pc = 0xffff0004;
-	# goto [pc];
 }
+

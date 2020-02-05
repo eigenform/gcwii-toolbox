@@ -1,0 +1,46 @@
+#!/usr/bin/python3
+""" gen-ios-sleigh - generate a SLEIGH specification for IOS syscalls """
+
+NAME_VAR    = "scname"
+OP_VAR      = "ios"
+
+name_template = '{name_var}: "{syscall_name}" is immed24={imm_string} {{}}\n'
+
+def_template = """
+define pcodeop {op};
+:{op}^COND {name} is $(AMODE) & COND & c2831=14 & c2427=6 & immed24 & {name}
+{{
+	build COND;
+	build {name};
+	id:4 = (immed24 >> 5) & 0xff;
+}}
+"""
+
+# -----------------------------------------------------------------------------
+
+from ios import get_syscall_table, syscall_name
+from sys import argv
+
+if (len(argv) < 2):
+    print("Usage: {} <kernel.elf>".format(argv[0]))
+    exit(0)
+
+syscalls = get_syscall_table(argv[1])
+render = str()
+render += "# -------------------------------------------------------------\n"
+render += "# This file is auto-generated with gen-ios-sleigh; do NOT edit!\n"
+render += "# -------------------------------------------------------------\n\n"
+
+for e in syscalls:
+    render += name_template.format(
+            name_var=NAME_VAR,
+            syscall_name=syscall_name(e['idx']).name,
+            imm_string=hex(e['imm24'])
+    )
+
+render += def_template.format(
+        op=OP_VAR,
+        name=NAME_VAR,
+)
+print(render)
+
