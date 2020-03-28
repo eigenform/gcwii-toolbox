@@ -125,6 +125,8 @@ for i in range(0, 64 * 4):
     off = pn2off(bootpn2pn(i))
     boot2 += data[off:off+0x800]
 
+print(hexdump(boot2))
+
 hdr_data = boot2[0x00:0x14]
 hdrlen, doff, certlen, tiklen, tmdlen = unpack(">LLLLL", hdr_data)
 print("[*] Got boot2 header,  data_off={:08x}".format(doff))
@@ -158,9 +160,18 @@ boot2_data = boot2[doff:doff+boot2_len]
 boot2_ddata = ticket.cipher.decrypt(boot2_data)
 filename = "boot2v{:02d}.bin".format(tmd.title_version)
 hdr_filename = "boot2v{:02d}.hdr.bin".format(tmd.title_version)
+cert_filename = "boot2v{:02d}.cert.bin".format(tmd.title_version)
+ticket_filename = "boot2v{:02d}.tik.bin".format(tmd.title_version)
+tmd_filename = "boot2v{:02d}.tmd.bin".format(tmd.title_version)
+
 with open(filename, "wb") as f:
     f.write(boot2_ddata)
-
 with open(hdr_filename, "wb") as f:
     f.write(boot2[0:hdrlen+certlen+tiklen+tmdlen+0x200])
+with open(cert_filename, "wb") as f:
+    f.write(cert_data)
+with open(ticket_filename, "wb") as f:
+    f.write(ticket_data)
+with open(tmd_filename, "wb") as f:
+    f.write(tmd_data)
 

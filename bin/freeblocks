@@ -9,23 +9,31 @@ from os import mkdir, makedirs
 from hexdump import hexdump
 from struct import pack, unpack
 from io import BytesIO as bio
-
-from elftools.elf.elffile import ELFFile
-from elftools.common.exceptions import *
-
 from Crypto.Cipher import AES
+import json
 
-ELF_MAGIC           = b'\x7fELF'
 SFFS_MAGIC          = b'SFFS'
 
-TOTAL_PAGE_SIZE     = 0x840
-PAGE_SIZE           = 0x800
-METADATA_SIZE       = 0x40
+PAGEMETA_LEN        = 0x040
+PAGEDATA_LEN        = 0x800
+PAGE_LEN            = 0x840
+CLUSTER_LEN         = PAGE_LEN * 8
 
 BLOCK_LAST          = 0xfffb
 BLOCK_RESERVED      = 0xfffc
 BLOCK_BAD           = 0xfffd
 BLOCK_FREE          = 0xfffe
+
+data = bytearray()
+
+
+def get_cluster_data(cidx):
+    buf = bytearray()
+    for i in range(0, 8):
+        base = (CLUSTER_LEN * cidx) + (i * PAGE_LEN)
+        tail = base + 0x800
+        buf += data[base:tail]
+    return buf
 
 
 class FAT(object):
@@ -54,22 +62,6 @@ class FAT(object):
         for idx, block in enumerate(self.block):
             if (self.block[idx] == BLOCK_FREE): 
                 self.free_blocks.append(idx)
-
-        # Find contiguous regions of free blocks
-        start = -1
-        end = -1;
-        self.free_regions = []
-        for bidx in self.free_blocks:
-            # Continue the region we're in
-            if (bidx == (end + 1)):
-                end = bidx
-            else:
-
-
-            # Start of a new region
-            if (start == -1):
-                start = bidx
-                end = start
 
 
 # -----------------------------------------------------------------------------
@@ -117,12 +109,11 @@ cur = 0
 print("[*] Searching for FATs ...")
 while (cur < len(data)):
     cur = data.find(SFFS_MAGIC, cur)
-    if (cur == -1): 
-        break
+    if (cur == -1): break
+    print("\tSFFS entry @ {:08x}".format(cur))
     fat = FAT(cur, data[cur:cur + 0x1000c])
     fat_list.append(fat)
     cur += len(SFFS_MAGIC)
-print("[*] Found {} FATs ...".format(len(fat_list)))
 
 # Enforce ordering of FATs in this list by the generation number (this makes 
 # it kinda easier to deal with reasoning about things changing through time).
@@ -130,16 +121,16 @@ print("[*] Found {} FATs ...".format(len(fat_list)))
 
 fat_list.sort()
 
-prev_freeblocks = fat_list[0].free_blocks
-print("[*] gen={:04x}: num_free={:04x}".format(fat_list[0].gen, len(prev_freeblocks)))
+inital_freeblocks = fat_list[0].free_blocks
+print("[*] gen={:04x}: num_free={:04x}".format(fat_list[0].gen, len(inital_freeblocks)))
 
 for fat in fat_list:
     cur_freeblocks = fat.free_blocks
-
-    # If the freelist has changed since the last generation
-    if (cur_freeblocks != prev_freeblocks):
-        print("[*] gen={:04x}: num_free={:04x} ({:+04x} blocks)".format(fat.gen, 
-            len(cur_freeblocks), (len(cur_freeblocks) - len(prev_freeblocks))))
+    if (cur_freeblocks != inital_freeblocks):
+        print("[*] gen={:04x}: num_free={:04x} ({:+04x} blocks cumulative)".format(fat.gen, 
+            len(cur_freeblocks), (len(cur_freeblocks) - len(inital_freeblocks))))
+    else:
+        print("[*] gen={:04x}: num_free={:04x}".format(fat.gen, len(cur_freeblocks)))
 
     prev_freeblocks = cur_freeblocks
 
@@ -151,7 +142,42 @@ free_lists = []
 for fat in fat_list:
     free_lists.append(set(fat.free_blocks))
 
-common_free_list = set.intersection(*free_lists)
+common_free_list = list(set.intersection(*free_lists))
+
+groups = [[common_free_list[0]]]
+for i in range(1, len(common_free_list)):
+    if (common_free_list[i - 1] + 1 == common_free_list[i]):
+        groups[-1].append(common_free_list[i])
+    else:
+        groups.append([common_free_list[i]])
+
+free_regions = []
+for group in groups:
+    x = {'idx': group[0], 'len': len(group)}
+    free_regions.append(x)
+#print(json.dumps(free_regions, indent=2))
+
+iv = bytearray(b'\x00' * 0x10)
+aes = AES.new(NAND_KEY, AES.MODE_CBC, iv=iv)
+#raw_data = aes.decrypt(data[cur:])
 
 
+#print(hexdump(get_cluster_data(0x7f00)))
 
+
+for reg in free_regions:
+    buf = bytearray()
+    cbase = reg['idx']
+    cnum = reg['len']
+    for i in range(0, cnum):
+        buf += get_cluster_data(cbase + i)
+    reg['decbuf'] = aes.decrypt(buf)
+
+print("There are {} free regions".format(len(free_regions)))
+#print(hexdump(free_regions[9]['decbuf']))
+
+for reg in free_regions:
+    filename = args.out_dir + "/" + "{:04x}_{:04x}.bin".format(reg['idx'], reg['len'])
+    with open(filename, "wb") as f:
+        f.write(reg['decbuf'])
+    print("[*] Wrote {:08x} bytes to {}".format(len(reg['decbuf']), filename))

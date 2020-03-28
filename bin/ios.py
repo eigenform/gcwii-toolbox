@@ -62,10 +62,10 @@ class syscall_name(Enum):
     ahb_memflush                = 0x2f
     cc_ahb_memflush             = 0x30
 
-    swirq31                     = 0x31
-    swirq18                     = 0x32
-    swirq7or8                   = 0x33
-    swirq                       = 0x34
+    enable_irq_iop              = 0x31
+    enable_irq_di               = 0x32
+    enable_irq_sdhc             = 0x33
+    enable_irq                  = 0x34
 
     iobuf_pool_access           = 0x35
     iobuf_alloc                 = 0x36
@@ -90,7 +90,7 @@ class syscall_name(Enum):
     di_reset_deassert           = 0x45
     di_reset_check              = 0x46
 
-    syscall_47                  = 0x47
+    which_kernel                = 0x47
     syscall_48                  = 0x48
     get_boot_vector             = 0x49
     get_hlwd_rev                = 0x4a

@@ -20,7 +20,3 @@ def dump(data, lvl):
     for line in hexdump(data, result='generator'):
         print("{}{}".format(indent, line))
 
-def get_tmdlen(data, off):
-    """ Given a bytearray and offset to a TMD, return the length of the TMD """
-    return 0x1e4 + ( unpack(">H", data[off+0x1de:off+0x1e0])[0] * 0x24 )
-

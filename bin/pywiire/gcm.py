@@ -125,6 +125,7 @@ class DiscHeader(object):
         # This is *sufficient* but not necessary?
         assert len(data) == 0x400
         self.data = data
+        print(hexdump(self.data))
 
         self.disc_id, self.maker_id, self.disc_num, self.disc_ver = \
                 unpack(">LHbb", data[0x00:0x08])
