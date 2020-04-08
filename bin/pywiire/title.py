@@ -28,8 +28,14 @@ class TitleType(Enum):
 class Ticket(object):
     """ Container for an eticket """
     def __init__(self, data):
+        
+        if (len(data) != 0x2a4):
+            print("[!] Ticket length is {:08x} bytes (?)".format(len(data)))
+            dump(data, 1)
+
         assert len(data) == 0x2a4
         self.data = data
+        self.is_dev = None
 
         sigtype = unpack(">L", data[0x00:0x04])[0]
         self.common_key_idx = unpack(">b", data[0x1f1:0x1f2])[0]
@@ -42,10 +48,11 @@ class Ticket(object):
             elif (self.common_key_idx == 1):
                 common_key = read_key("korean-common-key")
             else:
-                print("[!] Unknown common key index {} for issuer {}".format(
+                print("[!] Unknown common key index {} for issuer {}, using 0".format(
                     self.common_key_idx, self.issuer))
-                exit()
+                common_key = read_key("wii-common-key")
         elif ("XS00000006" in self.issuer):
+            self.is_dev = True
             common_key = read_key("rvt-common-key")
         else:
             print("[!] Unknown issuer {} for ticket".format(self.issuer))
@@ -105,24 +112,45 @@ class WAD(object):
         tickoff = coff + clen
         tmdoff = tickoff + ticklen
         doff = tmdoff + tmdlen
+        print("[*] WAD coff={:08x} tickoff={:08x} tmdoff={:08x}".format(coff,tickoff,tmdoff))
 
         # Parse ticket data
         ticket = self.data[tickoff:tickoff + ticklen]
         self.ticket = Ticket(ticket[:0x2a4])
 
+        # The issuer on the ticket is probably a good indication of whether 
+        # this package is a production/development release
+        self.is_dev = self.ticket.is_dev
+
         # Create a view of the TMD data
         self.tmd = TMD(self.data[tmdoff:tmdoff+tmdlen])
         self.content_data = []
 
+        print("[!] Found title {:08x}-{:08x} dev={}".format(self.tmd.title_id, self.tmd.title_version, self.is_dev))
+
         # Read all content entries
         cur = doff
-        for entry in self.tmd.content:
-            rdata = self.data[cur:cur+entry['aligned_size']]
-            dig = hashlib.sha1()
-            self.ticket.cipher = AES.new(self.ticket.title_key, AES.MODE_CBC, 
-                    iv=entry['iv'])
+        for ent in self.tmd.content:
+            digest = ent['digest']
+            asize = ent['aligned_size']
+            size = ent['size']
+            iv = ent['iv']
+
+            # Use the aligned size to decrypt the content data
+            rdata = self.data[cur:cur+asize]
+            self.ticket.cipher = AES.new(self.ticket.title_key, AES.MODE_CBC, iv=iv)
             ddata = self.ticket.cipher.decrypt(rdata)
-            dig.update(ddata[:entry['size']])
-            assert (dig.digest() == entry['digest'])
-            self.content_data.append(ddata)
-            cur += entry['aligned_size']
+
+            # Hash only bytes corresponding to the entry filesize and verify
+            # that the hash is actually correct (just in case ...)
+            dig = hashlib.sha1()
+            dig.update(ddata[:size])
+
+            #assert (dig.digest() == digest)
+            if (dig.digest() != digest):
+                print("[!!!] WARNING: CONTENT DIGEST IS INCORRECT")
+
+            # Save the decrypted data and move onto the next entry's data
+            self.content_data.append(ddata[:size])
+            cur += asize
+

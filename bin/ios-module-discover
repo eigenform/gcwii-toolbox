@@ -1,0 +1,180 @@
+#!/usr/bin/python3
+""" ios-module-discover - characterize different IOS modules """
+
+from sys import argv
+from pathlib import Path
+from binascii import hexlify
+from os import mkdir, makedirs
+from os.path import exists
+
+
+from pywiire.ios import *
+from pywiire.title import *
+
+import re 
+import datetime
+
+def get_ios_module(data, dev=None):
+    """ Given some decrypted content data, return an IOS module """
+
+    # IOS modules always appear to be regular-ol' ELF files
+    if (is_elf(data) == None): 
+        return None
+
+    elf = get_elffile(data)
+
+    # Try to obtain the IOS module type by pattern-matching on some of the
+    # buildstrings that are typically embedded in the binaries. Otherwise, 
+    # try falling back to mapping the IOS PID onto an IOS module type.
+
+    pid = get_ios_pid(elf)
+    if (has_build_string(data)):
+        bstring = get_build_string(data)
+        build_info = get_build_info(bstring)
+        module_type = IOSModuleType[build_info['name']]
+    else:
+        build_info = None
+        module_type = iospid_to_type(pid, dev=dev)
+
+    return {'elf': elf, 'build_info': build_info, 'module_type': module_type}
+
+def get_timestamp(binfo):
+    """ Get a datetime object from a build_info dict """
+    if (binfo['build_info'] != None):
+        ts_string = "{} {}".format(binfo['build_info']['date'], 
+                binfo['build_info']['time'])
+        try:
+            ts = datetime.datetime.strptime(ts_string, "%m/%d/%y %H:%M:%S")
+        except ValueError as e: 
+            ts = datetime.datetime.strptime(ts_string, "%Y-%m-%d %H-%M")
+    else:
+        ts = None
+    return ts
+
+
+# -----------------------------------------------------------------------------
+# First, iterate over all files and pull out all relevant modules.
+
+modules = []
+
+# Directory for dumping extracted contents
+BASE_PATH = "/tmp/ios-modules/"
+if (not exists(BASE_PATH)): 
+    makedirs(BASE_PATH)
+
+# Get the list of files from the current working directory
+pathlist = Path(".").glob('**/*.wad')
+
+# Iterate over each candidate WAD file
+for path in pathlist:
+
+    # Read the WAD file into memory and parse it
+    pn = str(path)
+    with open(pn, "rb") as f: 
+        wdata = f.read()
+
+    print("[*] Reading WAD {}".format(pn))
+    wad = WAD(wdata)
+
+    # Grab title information from the TMD section
+    title_type = (wad.tmd.title_id & 0xffffffff00000000) >> 32
+    title_id = (wad.tmd.title_id & 0xffffffff)
+    title_version = wad.tmd.title_version
+
+    # Ignore files that aren't 'system titles'
+    if (TitleType(title_type) != TitleType.SYSTEM): continue
+
+    # Ignore titles that have no IOS modules
+    id_blacklist = [TitleID.SM.value, TitleID.BOOT2.value]
+    if (title_id in id_blacklist): continue
+
+    # Iterate over all content entries described in the TMD
+    for idx, ent in enumerate(wad.tmd.content):
+        digest = hexlify(ent['digest']).decode('utf8')
+        size = ent['size']
+
+        # Skip build artifacts in the WAD (for now)
+        if ((idx == 0) and (size == 0x40)): continue
+
+        # Skip duplicate binaries we've already seen
+        #if (modules.get(digest)): continue
+
+        # Grab the actual decrypted data for this entry
+        cdata = wad.content_data[idx]
+        assert (len(cdata) == size)
+
+        # Skip kernel content entries
+        if (is_elfloader(cdata)):
+            print("[!] Skipping ELFLOADER {} idx {}".format(pn, idx))
+            continue
+
+        if (is_dol(cdata)):
+            print("[!] Skipping DOL {} idx {}".format(pn, idx))
+            continue
+
+        # Get some dict characterizing the module
+        module = get_ios_module(cdata, dev=wad.is_dev)
+        if (module == None): 
+            print("[!] Couldn't get module for {} idx {}".format(pn, idx))
+            outpn = "/tmp/unk/IOS{}v{}-{:08x}.app".format(title_id,title_version,idx)
+            with open(outpn, "wb") as f: f.write(cdata)
+            continue
+
+        module['majver'] = title_id
+        module['minver'] = title_version
+        module['total_size'] = size
+        module['data'] = cdata
+        module['digest'] = digest
+        module['is_dev'] = wad.is_dev
+           
+        # Create a new entry for this module
+        modules.append(module)
+
+print("[!] Discovered {} modules".format(len(modules)))
+
+
+# Bin all modules by the module type (in a dict, keyed by the digest).
+library = {}
+for mod in modules:
+    mtype = mod['module_type'].name
+    digest = mod['digest']
+    outdir = BASE_PATH + mtype
+
+    # If we haven't seen this module type yet, make a new list for it
+    if (library.get(mtype) == None):
+        if (not exists(outdir)): makedirs(outdir)
+        library[mtype] = {}
+
+    # If we've this particular module is already tracked, ignore it
+    if (library[mtype].get(digest)): continue
+    else: library[mtype][digest] = mod
+
+# For each type of module
+for item in library.items():
+    mtype = item[0]
+    modlist = item[1]
+
+    # For each unique module
+    for item in modlist.items():
+        dig = item[0]
+        mod = item[1]
+
+        name = mod['module_type'].name
+        size = mod['total_size']
+        data = mod['data']
+        majver = mod['majver']
+        minver = mod['minver']
+
+        outdir = BASE_PATH + name
+        fname = "{}-{:8s}.elf".format(name, dig[:8])
+        outp = "{}/{}".format(BASE_PATH + name, fname)
+        with open(outp, "wb") as f: f.write(mod['data'])
+        print(outp)
+
+        info = "name={:8s} size={:08x} digest={} ios{}v{}".format(
+                name, size, dig, majver, minver)
+        #print(info)
+
+
+
+
