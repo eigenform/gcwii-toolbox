@@ -1,0 +1,57 @@
+#!/usr/bin/python3
+""" tmds-parse - writes the contents of a tmds.sys file to stdout """
+
+from sys import argv
+from struct import pack, unpack
+from binascii import hexlify
+from hexdump import hexdump
+from pywiire.title import *
+
+def sizeof_fmt(num, suffix='B'):
+    for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
+        if abs(num) < 1024.0:
+            return "%3.1f%s%s" % (num, unit, suffix)
+        num /= 1024.0
+    return "%.1f%s%s" % (num, 'Yi', suffix)
+
+if len(argv) < 2:
+    print("usage: {} <tmds.sys>".format(argv[0]))
+with open(argv[1], "rb") as f:
+    data = f.read()
+
+cur = 0
+while (cur < len(data)):
+    title_type, title_id, tmd_len = unpack(">LLL", data[cur:cur+0x0c])
+    assert tmd_len == 0x0208
+
+    cur += 0x20
+    if ((cur % 0x20) != 0): cur = (cur & ~0x1f) + 0x20
+
+    tmd_data = data[cur:(cur + tmd_len)]
+    tmd = TMD(tmd_data)
+    title_type = (tmd.title_id & 0xffffffff00000000) >> 32
+    try:
+        title_type_str = TitleType(title_type)
+    except ValueError as e:
+        title_type_str = "{:08x} (unknown)".format(title_type)
+
+    title_id = (tmd.title_id & 0xffffffff)
+    title_version = tmd.title_version
+    try:
+        title_str = pack(">L", title_id).decode('utf8')
+    except UnicodeDecodeError as e:
+        title_str = "????"
+
+    print("[*] Found TMD id={} ({:08x}), version={:04x}, type={}".format(
+        title_str, title_id, title_version, title_type_str))
+    for entry in tmd.content: 
+        print("  cid={:02x} {} size={:08x} ({})".format(
+            entry['cid'], 
+            hexlify(entry['digest']).decode('utf8'), 
+            entry['size'], 
+            sizeof_fmt(entry['size']),
+        ))
+
+    cur += tmd_len
+    if ((cur % 0x20) != 0): cur = (cur & ~0x1f) + 0x20
+    print()

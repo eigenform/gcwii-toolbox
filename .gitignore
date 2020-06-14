@@ -18,6 +18,7 @@
 !bin/ios-kernel-discover
 !bin/ios-kernel-discover-nowad
 !bin/dolparse
+!bin/tmds-parse
 !bin/gcm-extract
 !bin/keys-extract
 !bin/rvth-extract
