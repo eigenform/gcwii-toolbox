@@ -1,0 +1,133 @@
+#!/usr/bin/python3
+""" ios-kernel-discover-nowad - characterize different IOS kernels 
+Kind of assumes that you're going to just run this after letting `zestig`
+pull all of the SFFS objects out of some NAND dump.
+"""
+
+from pathlib import Path
+from os import mkdir, makedirs
+
+from pywiire.ios import *
+from pywiire.title import *
+from binascii import hexlify
+import hashlib
+
+def get_ios_kernel(data):
+    """ Given some decrypted content data, return an IOS kernel """
+
+    # An IOS kernel always appears packaged up in the ELFLOADER format
+    if (is_elfloader(data) == None):
+        return None
+
+    # Split out the ELF file from the loader stub
+    hdr_len, elf_off, elf_len = unpack(">LLL", data[0x00:0x0c])
+    edata  = data[elf_off+hdr_len:elf_off+hdr_len+elf_len]
+    ldata = data[hdr_len:hdr_len+elf_off]
+    assert ((len(edata) + len(ldata) + hdr_len) == len(data))
+    elf = get_elffile(edata)
+    
+    dig = hashlib.sha1()
+    dig.update(edata)
+    digest = hexlify(dig.digest()).decode('utf8')
+
+    return { 'elf': elf, 'data': edata, 'digest': digest }
+
+# -----------------------------------------------------------------------------
+
+kernels = []
+
+# Get the list of files from the current working directory
+pathlist = Path(".").glob('**/*.tmd')
+
+# Directory for dumping extracted contents
+BASE_PATH = "/tmp/ios-kernels"
+if (not exists(BASE_PATH)): makedirs(BASE_PATH)
+
+# Iterate over each candidate WAD file
+for path in pathlist:
+    # Read the WAD file into memory and parse it
+    pn = str(path)
+    with open(pn, "rb") as f: 
+        wdata = f.read()
+    print("Checking {}".format(pn))
+    tmd = TMD(wdata)
+
+    # Grab title information from the TMD section
+    title_type = (tmd.title_id & 0xffffffff00000000) >> 32
+    title_id = (tmd.title_id & 0xffffffff)
+    title_version = tmd.title_version
+
+    # Ignore files that aren't 'system titles'
+    if (TitleType(title_type) != TitleType.SYSTEM): continue
+
+    # Ignore titles that have no IOS modules
+    id_blacklist = [TitleID.SM.value, TitleID.BOOT2.value]
+    if (title_id in id_blacklist): continue
+
+    # Build a list of associated .app files in the directory
+    applist = path.parent.glob('*.app')
+    app_table = {}
+    for app in applist:
+        with open(str(app), "rb") as g:
+            appdata = g.read()
+        d = hashlib.sha1()
+        d.update(appdata)
+        d = hexlify(d.digest()).decode('utf8')
+        app_table[d] = { 'digest': d, 'data': appdata }
+        print(app, d)
+
+
+    # Iterate over all content entries described in the TMD
+    for idx, ent in enumerate(tmd.content):
+        digest = hexlify(ent['digest']).decode('utf8')
+        size = ent['size']
+        print("entry={:02d}, dig={}".format(idx, digest))
+
+        # Skip build artifacts in the WAD (for now)
+        if ((idx == 0) and (size == 0x40)): continue
+
+        # If we don't have the .app file for this entry, need to skip
+        if app_table.get(digest) == None:
+            print("[!] No .app file for entry {:02d}".format(idx))
+            continue
+
+        # Get the actual data for this entry
+        cdata = app_table[digest]['data']
+        assert (len(cdata) == size)
+
+        # Skip IOS modules and DOL entries
+        if (is_elf(cdata) or is_dol(cdata)): continue
+
+        kernel = get_ios_kernel(cdata)
+        if (kernel == None): 
+            print("[!] Couldn't get kernel for {} idx {}".format(pn, idx))
+            outpn = "/tmp/unk/IOS{}v{}-{:08x}.app".format(title_id,title_version,idx)
+            exit()
+
+        kernel['majver'] = title_id
+        kernel['minver'] = title_version
+        kernel['total_size'] = size
+           
+        # Create a new entry for this kernel
+        kernels.append(kernel)
+
+print("[!] Discovered {} kernels".format(len(kernels)))
+
+library = {}
+
+for k in kernels:
+    dig = k['digest']
+    if (library.get(dig)):
+        continue
+
+    kind = "ios"
+    outdir = BASE_PATH
+    fname = "{}-IOS{}v{}-{:8s}.elf".format(kind, k['majver'], k['minver'], dig[:8])
+    outp = "{}/{}".format(BASE_PATH, fname)
+    with open(outp, "wb") as f: f.write(k['data'])
+    print(outp)
+
+    library[dig] = True
+
+
+
