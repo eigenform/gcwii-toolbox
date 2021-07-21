@@ -77,8 +77,12 @@ class TMD(object):
         self.content = []
 
         sigtype = unpack(">L", self.data[0x00:0x04])[0]
-        self.title_id, self.title_type = unpack(">QL", self.data[0x18c:0x198])
-        self.title_version, self.num_contents = unpack(">HH", self.data[0x1dc:0x1e0])
+        self.version, self.ca_crl_version, self.signer_crl_version, \
+        self.is_vwii, self.system_version, self.title_id, self.title_type \
+                = unpack(">bbbbQQL", self.data[0x180:0x198])
+
+        self.title_version, self.num_contents \
+                = unpack(">HH", self.data[0x1dc:0x1e0])
 
         # Iterate over each content entry in the TMD
         for i in range(0, self.num_contents): 

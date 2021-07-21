@@ -10,6 +10,6 @@ if (len(argv) < 2):
 
 syscalls = get_syscall_table(argv[1])
 
-fmt = "idx={:02x} impl={:08x} {}"
+fmt = "idx={:02x} instr={:08x} impl={:08x} {}"
 for e in syscalls:
-    print(fmt.format(e['idx'], e['impl_addr'], syscall_name(e['idx']).name))
+    print(fmt.format(e['idx'], e['instr'], e['impl_addr'], syscall_name(e['idx']).name))
