@@ -1,0 +1,133 @@
+#!/usr/bin/python3
+
+from sys import argv
+from os.path import expanduser
+from struct import pack, unpack
+from hexdump import hexdump
+from binascii import hexlify
+from Crypto.Cipher import AES
+import hashlib
+
+keytype = None
+
+
+def print_usage():
+    print("usage: unwad [retail|rvt] <.wad> <output file prefix>")
+    exit()
+
+def dump(data, lvl):
+    indent = '\t' * lvl
+    for line in hexdump(data, result='generator'):
+        print("{}{}".format(indent, line))
+
+class Ticket(object):
+    def __init__(self, data):
+        assert len(data) == 0x2a4
+        self.data = data
+        self.title_iv = b'\x00' * 0x10
+        self.enc_title_key = data[0x1bf:0x1cf]
+        self.iv = bytearray(data[0x1dc:0x1e4] + b'\x00' * 0x8)
+        keywrap_cipher = AES.new(self.__get_common_key(), 
+                AES.MODE_CBC, iv=self.iv)
+        self.title_key = keywrap_cipher.decrypt(self.enc_title_key)
+        self.cipher = AES.new(self.title_key, AES.MODE_CBC, iv=self.title_iv)
+
+    def __get_common_key(self):
+        if (keytype == "retail"):
+            path = expanduser("~/.wii/wii-common-key")
+        elif (keytype == "rvt"):
+            path = expanduser("~/.wii/rvt-common-key")
+        else:
+            print("[!] Keytype {} not supported".format(keytype))
+            exit()
+        try:
+            with open(path, "rb") as f:
+                self.rvt_common_key = f.read()
+        except:
+            print("[!] Couldn't open RVT common key at {}".format(path))
+            exit()
+        return self.rvt_common_key
+
+
+class WAD(object):
+    def __init__(self, data):
+        self.data = data
+
+        # Compute the layout
+        hlen, wtype, clen, res, ticklen, tmdlen, dlen, flen = \
+                unpack(">LLLLLLLL", self.data[0x00:0x20])
+
+        if ((hlen % 0x40) != 0): hlen = (hlen & ~0x3f) + 0x40
+        if ((clen % 0x40) != 0): clen = (clen & ~0x3f) + 0x40
+        if ((ticklen % 0x40) != 0): ticklen = (ticklen & ~0x3f) + 0x40
+        if ((tmdlen % 0x40) != 0): tmdlen = (tmdlen & ~0x3f) + 0x40
+        if ((dlen % 0x40) != 0): dlen = (dlen & ~0x3f) + 0x40
+
+        coff = hlen
+        tickoff = coff + clen
+        tmdoff = tickoff + ticklen
+        doff = tmdoff + tmdlen
+
+        # Parse ticket data
+        ticket = self.data[tickoff:tickoff + ticklen]
+        self.ticket = Ticket(ticket[:0x2a4])
+
+        # Create a view of the TMD data
+        tmd = self.data[tmdoff:tmdoff+tmdlen]
+        tmd_num_contents = unpack(">H", tmd[0x1de:0x1e0])[0]
+        print("[*] This TMD has {} entries".format(tmd_num_contents))
+
+        # Iterate over each content entry in the TMD
+        self.content = []
+        for i in range(0, tmd_num_contents): 
+            cbase = 0x1e4 + (i * 0x24)
+            centry = tmd[cbase:cbase + 0x24]
+            iv = bytearray(centry[0x04:0x06] + b'\x00' * 0xe)
+            digest = centry[0x10:]
+            cid, idx, ctype, size = unpack(">LHHQ", centry[:0x10])
+            if ((size % 0x40) != 0): aligned_size = (size & ~0x3f) + 0x40
+            else: aligned_size = size
+            assert (idx == i)
+            self.content.append({'iv': iv, 'cid': cid, 'size': size, 
+                'aligned_size': aligned_size, 'digest': digest})
+
+        # Read all content entries
+        cur = doff
+        self.content_data = []
+        for entry in self.content:
+            print("cur={:08x}, dig={}".format(cur, hexlify(entry['digest']).decode('utf-8')))
+            rdata = self.data[cur:cur+entry['aligned_size']]
+            dig = hashlib.sha1()
+            self.ticket.cipher = AES.new(self.ticket.title_key, AES.MODE_CBC, iv=entry['iv'])
+            ddata = self.ticket.cipher.decrypt(rdata)
+            dig.update(ddata[:entry['size']])
+            self.content_data.append(ddata[:entry['size']])
+
+            print("Computed: {}".format(dig.hexdigest()))
+            cur += entry['aligned_size']
+            print()
+
+
+# -----------------------------------------------------------------------------
+
+if (len(argv) < 4): 
+    print_usage()
+
+# Support different common keys
+if (argv[1] == "retail"): 
+    keytype = argv[1]
+elif(argv[1] == "rvt"): 
+    keytype = argv[1]
+else:
+    print_usage()
+
+with open(argv[2], "rb") as f:
+    data = f.read()
+
+x = WAD(data)
+for idx, data in enumerate(x.content_data):
+    ofilename = argv[3] + "_{:08x}.bin".format(idx)
+    with open(ofilename, "wb") as f:
+        f.write(data)
+    
+

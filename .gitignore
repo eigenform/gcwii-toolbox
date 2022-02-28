@@ -24,6 +24,9 @@
 !bin/rvth-extract
 !bin/boot2-extract
 !bin/boot1-extract.py
+!bin/unwad
+!bin/tgc-extract
+!bin/tmds-parse
 !bin/pywiire/
 !bin/pywiire/gcm.py
 !bin/pywiire/keys.py
